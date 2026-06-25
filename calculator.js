@@ -101,3 +101,8 @@ function evaluateExpression(expression) {
 }
 
 registerTool('calculator', calculator);
+
+onExit: () => {
+    calculatorSessionLines = [];
+    print("system: exited calculator mode.");
+}

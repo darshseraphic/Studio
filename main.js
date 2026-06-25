@@ -7,6 +7,9 @@ const SYSTEM_PROMPT = "darshseraphic/studio>";
 let currentMode = "main";
 const registry = {};
 
+// Keep track of which tools are actively running or have data in this session
+const usedToolsInSession = new Set();
+
 export function print(text) {
     const line = document.createElement('div');
     line.textContent = text;
@@ -21,28 +24,44 @@ export function registerTool(name, toolModule) {
 export function setMode(modeName, promptText = "") {
     currentMode = modeName;
     promptSpan.textContent = promptText;
+    
+    if (modeName !== "main") {
+        usedToolsInSession.add(modeName);
+    }
 }
 
 function handleGlobalSave() {
     let savedAny = false;
     
-    if (registry['note'] && typeof registry['note'].getLines === 'function') {
+    // 1. Check 'note' tool
+    if (usedToolsInSession.has('note') && registry['note'] && typeof registry['note'].getLines === 'function') {
         const notes = registry['note'].getLines();
-        if (notes) { download(notes, 'note.txt'); savedAny = true; }
+        if (notes && notes.trim() !== '') { 
+            download(notes, 'note.txt'); 
+            savedAny = true; 
+        }
     }
     
-    if (registry['calculator'] && typeof registry['calculator'].getLines === 'function') {
+    // 2. Check 'calculator' tool
+    if (usedToolsInSession.has('calculator') && registry['calculator'] && typeof registry['calculator'].getLines === 'function') {
         const calc = registry['calculator'].getLines();
-        if (calc) { download(calc, 'calculator.txt'); savedAny = true; }
+        if (calc && calc.trim() !== '') { 
+            download(calc, 'calculator.txt'); 
+            savedAny = true; 
+        }
     }
 
-    if (registry['weather'] && typeof registry['weather'].getLines === 'function') {
+    // 3. Check 'weather' tool
+    if (usedToolsInSession.has('weather') && registry['weather'] && typeof registry['weather'].getLines === 'function') {
         const weatherData = registry['weather'].getLines();
-        if (weatherData) { download(weatherData, 'weather.csv'); savedAny = true; }
+        if (weatherData && weatherData.trim() !== '') { 
+            download(weatherData, 'weather.csv'); 
+            savedAny = true; 
+        }
     }
     
     if (!savedAny) {
-        print("error: no content to save.");
+        print("system: no active session logs or data found to download.");
     }
 }
 
@@ -74,6 +93,10 @@ window.addEventListener('keydown', (e) => {
         if (currentMode !== "main") {
             const activeTool = registry[currentMode];
             if (activeTool && activeTool.onExit) activeTool.onExit();
+            
+            // Cleanly remove from active download queue upon manual exit
+            usedToolsInSession.delete(currentMode);
+            
             setMode("main", SYSTEM_PROMPT);
         }
     }
@@ -110,7 +133,7 @@ cmdInput.addEventListener('keydown', async (e) => {
             print("  save       - download all session logs to txt files");
             print("  note       - start note-taking session");
             print("  calculator - start terminal calculator mode");
-            print("  weather    - fetch current weather forecast table for a location (use: weather/cityname)");
+            print("  weather    - fetch current weather forecast table for a location (use: weather/city name)");
         } else if (command === 'clear') {
             outputDiv.textContent = '';
         } else if (command === 'login') {
@@ -118,6 +141,7 @@ cmdInput.addEventListener('keydown', async (e) => {
         } else if (command === 'save') {
             handleGlobalSave();
         } else if (registry[baseCommand]) {
+            usedToolsInSession.add(baseCommand);
             setMode(baseCommand, registry[baseCommand].prompt || "");
             await registry[baseCommand].onEnter();
             if (command.includes('/')) {

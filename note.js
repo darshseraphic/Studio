@@ -25,3 +25,8 @@ const noteTool = {
 };
 
 registerTool('note', noteTool);
+
+onExit: () => {
+    noteSessionLines = [];
+    print("system: exited note mode.");
+}
