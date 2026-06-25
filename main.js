@@ -1,5 +1,3 @@
-import { pushFileToGitHub } from './github.js';
-
 const outputDiv = document.getElementById('output');
 const cmdInput = document.getElementById('cmd-input');
 const themeToggle = document.getElementById('theme-toggle');
@@ -64,12 +62,13 @@ function handleGlobalSave() {
 }
 
 async function download(content, filename) {
-    const token = localStorage.getItem('github_user_token');
-    const repo = localStorage.getItem('github_active_repo');
+    const token = localStorage.getItem('user');
+    const repo = localStorage.getItem('repository');
 
-    if (token && repo) {
+    // Query our tool registry dynamically to eliminate circular module import errors
+    if (token && repo && registry['github'] && typeof registry['github'].sync === 'function') {
         print(`system: pushing ${filename} to your repository [${repo}]...`);
-        const success = await pushFileToGitHub(filename, content);
+        const success = await registry['github'].sync(filename, content);
         if (success) {
             print(`system: cloud backup complete. ${filename} pushed successfully to GitHub.`);
             return;
@@ -78,6 +77,7 @@ async function download(content, filename) {
         }
     }
 
+    // Default Browser fallback local save behavior
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

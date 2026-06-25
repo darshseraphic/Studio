@@ -2,9 +2,50 @@ import { registerTool, print } from './main.js';
 
 let activeRepo = localStorage.getItem('repository') || '';
 
+// The Sync function lives entirely inside this file now
+async function pushFileToGitHub(fileName, content) {
+    const token = localStorage.getItem('user');
+    const username = localStorage.getItem('github_username');
+    const repo = localStorage.getItem('repository');
+
+    if (!token || !username || !repo) return false;
+
+    try {
+        const base64Content = btoa(unescape(encodeURIComponent(content)));
+        let sha = null;
+
+        const fileCheck = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/${fileName}`, {
+            headers: { 'Authorization': `token ${token}` }
+        });
+        if (fileCheck.ok) {
+            const fileData = await fileCheck.json();
+            sha = fileData.sha;
+        }
+
+        const pushRes = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/${fileName}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `token ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                message: `terminal session auto-sync: ${fileName}`,
+                content: base64Content,
+                sha: sha
+            })
+        });
+
+        return pushRes.ok;
+    } catch (e) {
+        return false;
+    }
+}
+
 const githubTool = {
     helpText: "configure github backup workspace (use: login/token or repo/name)",
     prompt: "github>",
+    // Attach the sync method here so main.js can read it without importing this file explicitly!
+    sync: pushFileToGitHub, 
     onEnter: async () => {
         const token = localStorage.getItem('user');
         print("system: github workspace mode activated.");
@@ -26,7 +67,6 @@ const githubTool = {
 
         const token = localStorage.getItem('user');
 
-        // Handle Token Login
         if (action === 'login') {
             if (!value) {
                 print("error: format must be login/token");
@@ -49,7 +89,6 @@ const githubTool = {
             return;
         }
 
-        // Handle Repository Target Setup
         if (action === 'repo') {
             if (!token) {
                 print("error: please complete login/token authentication first.");
@@ -110,42 +149,3 @@ const githubTool = {
 };
 
 registerTool('github', githubTool);
-
-// Global export to let main.js push data straight to github via this endpoint
-export async function pushFileToGitHub(fileName, content) {
-    const token = localStorage.getItem('user');
-    const username = localStorage.getItem('github_username');
-    const repo = localStorage.getItem('repository');
-
-    if (!token || !username || !repo) return false;
-
-    try {
-        const base64Content = btoa(unescape(encodeURIComponent(content)));
-        let sha = null;
-
-        const fileCheck = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/${fileName}`, {
-            headers: { 'Authorization': `token ${token}` }
-        });
-        if (fileCheck.ok) {
-            const fileData = await fileCheck.json();
-            sha = fileData.sha;
-        }
-
-        const pushRes = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/${fileName}`, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `token ${token}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                message: `terminal session auto-sync: ${fileName}`,
-                content: base64Content,
-                sha: sha
-            })
-        });
-
-        return pushRes.ok;
-    } catch (e) {
-        return false;
-    }
-}
