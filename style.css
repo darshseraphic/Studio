@@ -23,8 +23,6 @@ body {
     margin: 0;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    
-    /* FIX: Prevents font-subpixel processing from warping layout tracking metrics */
     text-rendering: optimizeSpeed; 
     overflow: hidden; 
 }
@@ -74,6 +72,18 @@ body {
     flex-direction: column;
     align-items: flex-start;
     padding: 15px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--text-color) transparent;
+}
+
+#terminal-container::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+    background: transparent;
+}
+
+#terminal-container::-webkit-scrollbar-thumb {
+    background-color: var(--text-color);
 }
 
 #output {
@@ -81,8 +91,6 @@ body {
     white-space: pre-wrap;
     word-wrap: break-word;
     text-align: left;
-    
-    /* FIX: Structural backup to force non-wrapped text nodes to remain un-bolded */
     font-weight: normal !important; 
 }
 
@@ -132,8 +140,6 @@ textarea {
     font-variant-ligatures: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    
-    /* FIX: Standardized rendering pipeline to align directly with printed text strings */
     text-rendering: optimizeSpeed; 
     resize: none;
     overflow: hidden;
