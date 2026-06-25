@@ -1,3 +1,5 @@
+import { pushFileToGitHub } from './github.js';
+
 const outputDiv = document.getElementById('output');
 const cmdInput = document.getElementById('cmd-input');
 const themeToggle = document.getElementById('theme-toggle');
@@ -7,7 +9,6 @@ const SYSTEM_PROMPT = "darshseraphic/studio>";
 let currentMode = "main";
 const registry = {};
 
-// Keep track of which tools are actively running or have data in this session
 const usedToolsInSession = new Set();
 
 export function print(text) {
@@ -33,7 +34,6 @@ export function setMode(modeName, promptText = "") {
 function handleGlobalSave() {
     let savedAny = false;
     
-    // 1. Check 'note' tool
     if (usedToolsInSession.has('note') && registry['note'] && typeof registry['note'].getLines === 'function') {
         const notes = registry['note'].getLines();
         if (notes && notes.trim() !== '') { 
@@ -42,7 +42,6 @@ function handleGlobalSave() {
         }
     }
     
-    // 2. Check 'calculator' tool
     if (usedToolsInSession.has('calculator') && registry['calculator'] && typeof registry['calculator'].getLines === 'function') {
         const calc = registry['calculator'].getLines();
         if (calc && calc.trim() !== '') { 
@@ -51,7 +50,6 @@ function handleGlobalSave() {
         }
     }
 
-    // 3. Check 'weather' tool
     if (usedToolsInSession.has('weather') && registry['weather'] && typeof registry['weather'].getLines === 'function') {
         const weatherData = registry['weather'].getLines();
         if (weatherData && weatherData.trim() !== '') { 
@@ -65,7 +63,21 @@ function handleGlobalSave() {
     }
 }
 
-function download(content, filename) {
+async function download(content, filename) {
+    const token = localStorage.getItem('github_user_token');
+    const repo = localStorage.getItem('github_active_repo');
+
+    if (token && repo) {
+        print(`system: pushing ${filename} to your repository [${repo}]...`);
+        const success = await pushFileToGitHub(filename, content);
+        if (success) {
+            print(`system: cloud backup complete. ${filename} pushed successfully to GitHub.`);
+            return;
+        } else {
+            print("warning: cloud sync failed. falling back to direct browser local fallback file download.");
+        }
+    }
+
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -75,7 +87,7 @@ function download(content, filename) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    print(`system: ${filename} downloaded successfully.`);
+    print(`system: ${filename} downloaded locally successfully.`);
 }
 
 document.body.addEventListener('click', (e) => {
@@ -93,10 +105,7 @@ window.addEventListener('keydown', (e) => {
         if (currentMode !== "main") {
             const activeTool = registry[currentMode];
             if (activeTool && activeTool.onExit) activeTool.onExit();
-            
-            // Cleanly remove from active download queue upon manual exit
             usedToolsInSession.delete(currentMode);
-            
             setMode("main", SYSTEM_PROMPT);
         }
     }
@@ -129,15 +138,13 @@ cmdInput.addEventListener('keydown', async (e) => {
             print("available core commands:");
             print("  help       - display this log");
             print("  clear      - erase terminal output window");
-            print("  login      - initiate github device flow");
-            print("  save       - download all session logs to txt files");
+            print("  github     - configure remote github sync workspace environment");
+            print("  save       - download all session logs to files (or sync to cloud repository)");
             print("  note       - start note-taking session");
             print("  calculator - start terminal calculator mode");
             print("  weather    - fetch current weather forecast table for a location (use: weather/city name)");
         } else if (command === 'clear') {
             outputDiv.textContent = '';
-        } else if (command === 'login') {
-            print("err: client access identifier (client_id) not linked.");
         } else if (command === 'save') {
             handleGlobalSave();
         } else if (registry[baseCommand]) {
