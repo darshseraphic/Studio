@@ -24,7 +24,7 @@ const weather = {
         print(`system: searching for coordinates of ${locationName}...`);
 
         try {
-            // Get the user's exact system timezone (e.g., "Asia/Kolkata", "America/New_York")
+
             const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
             const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locationName)}&count=1&language=en&format=json`);
@@ -39,7 +39,6 @@ const weather = {
             const { latitude, longitude, name, country } = geoData.results[0];
             print(`system: fetching data for ${name}, ${country}...`);
 
-            // Added &timezone=${userTimeZone} to ensure the hourly payload aligns with user's system clock
             const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_180m,weather_code,is_day&timezone=${encodeURIComponent(userTimeZone)}`);
             if (!weatherResponse.ok) throw new Error();
             const data = await weatherResponse.json();
@@ -54,8 +53,7 @@ const weather = {
                 const isDayValues = data.hourly.is_day || [];
 
                 const titleText = `${name}, ${country}`;
-                
-                // Construct target string that perfectly matches the local API hour format (YYYY-MM-DDTHH:00)
+
                 const now = new Date();
                 const year = now.getFullYear();
                 const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -78,8 +76,6 @@ const weather = {
                         
                         const code = weatherCodes[i] !== undefined ? weatherCodes[i] : 0;
                         const isDay = isDayValues[i] !== undefined ? isDayValues[i] : 1;
-
-                        // 1. Clean, borderless text columns (using uniform spacing alignment)
                         const leftRows = [
                             `  Location  : ${titleText.slice(0, 22).padEnd(22)}`,
                             `  Date/Time : ${(dateStr + " " + timeStr).slice(0, 22).padEnd(22)}`,
@@ -91,9 +87,8 @@ const weather = {
 
                         let rRows = [];
 
-                        // 2. High-quality staggered ASCII art variants (Strictly 20 characters wide)
+
                         if (isDay === 0 && (code === 0 || code === 1)) {
-                            // Night / Clear Sky
                             rRows = [
                                 "                    ",
                                 "       .--.          ",
@@ -103,7 +98,7 @@ const weather = {
                                 "                    "
                             ];
                         } else if (code === 0) {
-                            // Sunny / Clear Day
+
                             rRows = [
                                 "       \\ | /         ",
                                 "       .---.          ",
@@ -113,7 +108,7 @@ const weather = {
                                 "                    "
                             ];
                         } else if (code === 1 || code === 2 || code === 3) {
-                            // Cloudy (Staggered Multi-Cloud)
+
                             rRows = [
                                 "    .--.            ",
                                 "  .(    ).   .--.    ",
@@ -123,7 +118,7 @@ const weather = {
                                 "                    "
                             ];
                         } else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95) {
-                            // Rainy (Raining from staggered clouds)
+
                             rRows = [
                                 "    .--.            ",
                                 "  .(    ).   .--.    ",
@@ -133,7 +128,7 @@ const weather = {
                                 "            ' ' '   "
                             ];
                         } else if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) {
-                            // Snowy (Snowing from staggered clouds)
+
                             rRows = [
                                 "    .--.            ",
                                 "  .(    ).   .--.    ",
@@ -143,7 +138,7 @@ const weather = {
                                 "            * * "
                             ];
                         } else {
-                            // Default Fallback / Partly Cloudy
+
                             rRows = [
                                 "     \\  /           ",
                                 "   _ /\"\".-.         ",
@@ -154,14 +149,12 @@ const weather = {
                             ];
                         }
 
-                        // 3. Print the data and visuals side-by-side with open breathing room
                         print(""); 
                         for (let j = 0; j < 6; j++) {
                             print(`${leftRows[j]}      ${rRows[j]}`);
                         }
                         print("");
 
-                        // Save session analytics data
                         weatherSessionLines.push(`title,${titleText}`);
                         weatherSessionLines.push(`date_time,${dateStr} ${timeStr}`);
                         weatherSessionLines.push(`temp,${t}`);
@@ -197,13 +190,10 @@ const weather = {
 registerTool('weather', weather);
 
 onExit: () => {
-        // Clear the active session array so it doesn't get swept up by a later global save
         weatherSessionLines = []; 
         print("system: exited weather mode.");
     }
 
-    // Add this property directly inside your weather tool configuration object
 clearBuffer: () => {
-    // Replace 'weatherLogLines' with whatever your weather history variable is named
     weatherLogLines = []; 
 }

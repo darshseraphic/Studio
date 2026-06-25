@@ -1,7 +1,5 @@
 import { registerTool, print } from './main.js';
-
 let noteSessionLines = JSON.parse(localStorage.getItem('note')) || [];
-
 const noteTool = {
     helpText: "start note-taking session",
     prompt: "",

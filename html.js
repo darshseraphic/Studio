@@ -15,7 +15,7 @@ const htmlTool = {
     prompt: "01 | ",
     
     onEnter: async () => {
-        print("system: entering live html ide environment...");
+        print("system: entering live html IDE environment...");
         print("--------------------------------------------------");
         print("instructions: paste or type your markup code.");
         print("commands: run | undo | clean | copy | exit");
@@ -109,7 +109,7 @@ const htmlTool = {
             return;
         }
 
-        if (cleanInput === 'run') {
+if (cleanInput === 'run') {
             if (editorLines.length === 0) {
                 print("warning: source layout buffer is empty. write some html code first!");
                 updateLineNumberPrompt();
@@ -118,9 +118,36 @@ const htmlTool = {
 
             print("system: compiling source markup and launching application sandbox...");
             const fullHtmlContent = editorLines.join('\n');
-            const blob = new Blob([fullHtmlContent], { type: 'text/html' });
+            
+            // 1. Base64 encode the code to safely deliver it to the data URI inside the iframe
+            const escapedHtml = btoa(unescape(encodeURIComponent(fullHtmlContent)));
+            
+            // 2. Build a shell document that loads the user's code inside a restricted iframe wrapper
+            // Notice: 'allow-scripts' is active so animations/logic work, but omitting 'allow-same-origin'
+            // completely locks the window down from touching your local storage or active session keys.
+            const sandboxWrapper = `
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Application Sandbox Preview</title>
+                    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'none';">
+                    <style>
+                        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
+                        iframe { border: none; width: 100%; height: 100%; display: block; }
+                    </style>
+                </head>
+                <body>
+                    <iframe sandbox="allow-scripts" src="data:text/html;base64,${escapedHtml}"></iframe>
+                </body>
+                </html>
+            `;
+            
+            // 3. Open the sandboxed shell context in a new window tab
+            const blob = new Blob([sandboxWrapper], { type: 'text/html' });
             const blobURL = URL.createObjectURL(blob);
             window.open(blobURL, '_blank');
+            
             updateLineNumberPrompt();
             return;
         }

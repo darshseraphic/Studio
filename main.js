@@ -16,7 +16,6 @@ if (promptSpan) {
     promptSpan.textContent = getSystemPrompt();
 }
 
-// Ensure print returns the line element so tools like html can manage their layout rows
 export function print(text) {
     const line = document.createElement('div');
     line.textContent = text;
@@ -40,14 +39,13 @@ export function setMode(modeName, promptText = "") {
     }
 }
 
-// ROOT FIX: Turned into an async function to process uploads sequentially
 async function handleGlobalSave() {
     let savedAny = false;
     
     if (usedToolsInSession.has('note') && registry['note'] && typeof registry['note'].getLines === 'function') {
         const notes = registry['note'].getLines();
         if (notes && notes.trim() !== '') { 
-            await download(notes, 'note.txt'); // ROOT FIX: Added await
+            await download(notes, 'note.txt'); 
             savedAny = true; 
         }
     }
@@ -55,7 +53,7 @@ async function handleGlobalSave() {
     if (usedToolsInSession.has('calculator') && registry['calculator'] && typeof registry['calculator'].getLines === 'function') {
         const calc = registry['calculator'].getLines();
         if (calc && calc.trim() !== '') { 
-            await download(calc, 'calculator.txt'); // ROOT FIX: Added await
+            await download(calc, 'calculator.txt'); 
             savedAny = true; 
         }
     }
@@ -63,7 +61,7 @@ async function handleGlobalSave() {
     if (usedToolsInSession.has('weather') && registry['weather'] && typeof registry['weather'].getLines === 'function') {
         const weatherData = registry['weather'].getLines();
         if (weatherData && weatherData.trim() !== '') { 
-            await download(weatherData, 'weather.csv'); // ROOT FIX: Added await
+            await download(weatherData, 'weather.csv'); 
             savedAny = true; 
         }
     }
@@ -71,7 +69,7 @@ async function handleGlobalSave() {
     if (usedToolsInSession.has('html') && registry['html'] && typeof registry['html'].getLines === 'function') {
         const htmlCode = registry['html'].getLines();
         if (htmlCode && htmlCode.trim() !== '') { 
-            await download(htmlCode, 'index.html'); // ROOT FIX: Added await
+            await download(htmlCode, 'index.html'); 
             savedAny = true; 
         }
     }
@@ -125,9 +123,6 @@ window.addEventListener('keydown', (e) => {
         if (currentMode !== "main") {
             const activeTool = registry[currentMode];
             if (activeTool && typeof activeTool.onExit === 'function') activeTool.onExit();
-            
-            // ROOT FIX: Removed usedToolsInSession.delete(currentMode);
-            // This ensures exited tools remain trackable when global save runs!
             
             setMode("main", getSystemPrompt());
             if (cmdInput) {
@@ -203,11 +198,9 @@ if (cmdInput) {
             const command = input.trim().toLowerCase();
             const baseCommand = command.split('/')[0];
 
-            // ADDED FEATURE: The end/targeted session destruction router parsing engine
             if (baseCommand === 'end') {
                 const targetTool = command.split('/')[1];
                 if (!targetTool) {
-                    // Global hard clean: wipe all history references across everything
                     usedToolsInSession.clear();
                     Object.keys(registry).forEach(toolName => {
                         if (registry[toolName] && typeof registry[toolName].clearBuffer === 'function') {
@@ -216,7 +209,6 @@ if (cmdInput) {
                     });
                     print("system: all active tool session states and tracking logs have been completely wiped.");
                 } else {
-                    // Granular clean: safely wipe individual sub-application caches out of active memory
                     if (usedToolsInSession.has(targetTool)) {
                         usedToolsInSession.delete(targetTool);
                         if (registry[targetTool] && typeof registry[targetTool].clearBuffer === 'function') {

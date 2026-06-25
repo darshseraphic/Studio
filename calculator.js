@@ -103,12 +103,6 @@ function evaluateExpression(expression) {
 registerTool('calculator', calculator);
 
 onExit: () => {
-    calculatorSessionLines = [];
+    calculatorSessionLines = []; // or whatever your array name is
     print("system: exited calculator mode.");
-}
-
-// Add this property directly inside your calculator tool configuration object
-clearBuffer: () => {
-    // Replace 'calcHistoryLines' with whatever your calculator variable is named
-    calcHistoryLines = []; 
 }
