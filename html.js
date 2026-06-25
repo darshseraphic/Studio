@@ -1,0 +1,122 @@
+import { registerTool, print, setMode, getSystemPrompt } from './main.js';
+
+let editorLines = [];
+let editorElements = []; // Tracks specific row elements generated in the terminal layout
+
+function updateLineNumberPrompt() {
+    const currentLineNum = editorLines.length + 1;
+    const formattedNum = String(currentLineNum).padStart(2, '0');
+    htmlTool.prompt = `${formattedNum} | `;
+    setMode('html', htmlTool.prompt);
+}
+
+const htmlTool = {
+    helpText: "open an interactive html ide vault. type 'run' to execute, 'undo' to remove last line, 'exit' to quit.",
+    prompt: "01 | ",
+    
+    onEnter: async () => {
+        print("system: entering live html ide environment...");
+        print("--------------------------------------------------");
+        print("instructions: paste or type your markup code.");
+        print("commands: type 'run' to preview | type 'undo' to delete last line | type 'exit' to save.");
+        print("--------------------------------------------------");
+
+        editorLines = [];
+        editorElements = [];
+        updateLineNumberPrompt();
+    },
+
+    // Handles the removal of newlines and feeds text back up to main.js editor
+    backspaceUp: () => {
+        if (editorLines.length === 0) return null;
+        
+        const removedLineText = editorLines.pop();
+        const removedElement = editorElements.pop();
+        
+        // Remove the exact line row from screen safely
+        if (removedElement && removedElement.parentNode) {
+            removedElement.parentNode.removeChild(removedElement);
+        }
+        
+        updateLineNumberPrompt();
+        return removedLineText;
+    },
+
+    handleInput: async (input) => {
+        if (input.includes('\n') || input.includes('\r')) {
+            const normalizedInput = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const lines = normalizedInput.split('\n');
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (line === '' && i === lines.length - 1) continue;
+                
+                const currentLineNum = editorLines.length + 1;
+                const formattedNum = String(currentLineNum).padStart(2, '0');
+                
+                const el = print(`${formattedNum} | ${line}`);
+                editorLines.push(line);
+                editorElements.push(el);
+            }
+            updateLineNumberPrompt();
+            return;
+        }
+
+        const cleanInput = input.trim().toLowerCase();
+
+        if (cleanInput === 'undo') {
+            if (editorLines.length === 0) {
+                print("system: buffer is already empty. nothing left to undo.");
+            } else {
+                const removed = editorLines.pop();
+                const removedElement = editorElements.pop();
+                if (removedElement && removedElement.parentNode) {
+                    removedElement.parentNode.removeChild(removedElement);
+                }
+                print(`system: removed line ${String(editorLines.length + 1).padStart(2, '0')}: "${removed}"`);
+            }
+            updateLineNumberPrompt();
+            return;
+        }
+
+        if (cleanInput === 'run') {
+            if (editorLines.length === 0) {
+                print("warning: source layout buffer is empty. write some html code first!");
+                updateLineNumberPrompt();
+                return;
+            }
+
+            print("system: compiling source markup and launching application sandbox...");
+            const fullHtmlContent = editorLines.join('\n');
+            const blob = new Blob([fullHtmlContent], { type: 'text/html' });
+            const blobURL = URL.createObjectURL(blob);
+            window.open(blobURL, '_blank');
+            updateLineNumberPrompt();
+            return;
+        }
+
+        if (cleanInput === 'exit') {
+            print("system: closing IDE buffer instance.");
+            setMode("main", getSystemPrompt());
+            return;
+        }
+
+        // Standard single line type entry
+        const currentLineNum = editorLines.length + 1;
+        const formattedNum = String(currentLineNum).padStart(2, '0');
+        const el = print(`${formattedNum} | ${input}`);
+
+        editorLines.push(input);
+        editorElements.push(el);
+        updateLineNumberPrompt();
+    },
+
+    onExit: () => {
+        print("system: exited html editor workspace.");
+    },
+    getLines: () => {
+        return editorLines.join('\n');
+    }
+};
+
+registerTool('html', htmlTool);
