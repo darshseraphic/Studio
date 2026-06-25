@@ -23,7 +23,9 @@ body {
     margin: 0;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
+    
+    /* FIX: Prevents font-subpixel processing from warping layout tracking metrics */
+    text-rendering: optimizeSpeed; 
     overflow: hidden; 
 }
 
@@ -79,6 +81,9 @@ body {
     white-space: pre-wrap;
     word-wrap: break-word;
     text-align: left;
+    
+    /* FIX: Structural backup to force non-wrapped text nodes to remain un-bolded */
+    font-weight: normal !important; 
 }
 
 #output div {
@@ -108,7 +113,6 @@ body {
     white-space: nowrap;
 }
 
-
 textarea {
     background: transparent;
     border: none;
@@ -128,7 +132,9 @@ textarea {
     font-variant-ligatures: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
+    
+    /* FIX: Standardized rendering pipeline to align directly with printed text strings */
+    text-rendering: optimizeSpeed; 
     resize: none;
     overflow: hidden;
 }

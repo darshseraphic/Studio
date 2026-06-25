@@ -239,7 +239,8 @@ if (cmdInput) {
             } else if (command === 'save') {
                 await handleGlobalSave();
             } else if (command === 'hello') {
-                if (outputDiv) outputDiv.textContent = 'hello, this is darshseraphic, nice to meet you!';
+                // FIX: Used print() instead of direct textContent overwrites to protect your terminal layout grid
+                print('hello, this is darshseraphic, nice to meet you!');
             } else if (registry[baseCommand]) {
                 usedToolsInSession.add(baseCommand);
                 setMode(baseCommand, registry[baseCommand].prompt || "");

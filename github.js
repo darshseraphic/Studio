@@ -2,7 +2,6 @@ import { registerTool, print, getSystemPrompt } from './main.js';
 
 let activeRepo = localStorage.getItem('repository') || '';
 
-// The Sync function lives entirely inside this file now
 async function pushFileToGitHub(fileName, content) {
     const token = localStorage.getItem('user');
     const username = localStorage.getItem('github_username');
@@ -44,14 +43,12 @@ async function pushFileToGitHub(fileName, content) {
 const githubTool = {
     helpText: "configure github backup workspace (use: login/token or repo/name)",
     prompt: "github>",
-    // Attach the sync method here so main.js can read it without importing this file explicitly!
     sync: pushFileToGitHub, 
     onEnter: async () => {
         const token = localStorage.getItem('user');
         print("system: github workspace mode activated.");
         if (token) {
             print("status: authenticated via stored token cache.");
-            // Keep activeRepo matching the storage variable cleanly on menu re-entry
             activeRepo = localStorage.getItem('repository') || '';
             print(`active workspace repo: ${activeRepo || 'none (set using repo/name)'}`);
         } else {
@@ -85,10 +82,7 @@ const githubTool = {
                 localStorage.setItem('user', value);
                 localStorage.setItem('github_username', userData.login);
                 print(`system: successfully authenticated as @${userData.login}!`);
-                
-                // The main system prompt data is now updated behind the scenes. 
-                // Once they hit CTRL + E, they'll immediately see their brand new username seed!
-                
+                          
             } catch (err) {
                 print("error: invalid github access token or network failure.");
             }
