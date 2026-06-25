@@ -3,11 +3,18 @@ const cmdInput = document.getElementById('cmd-input');
 const themeToggle = document.getElementById('theme-toggle');
 const promptSpan = document.querySelector('.input-line span');
 
-const SYSTEM_PROMPT = "darshseraphic/studio>";
+// DYNAMIC PROMPT FUNCTION: Checks cache for username, defaults to 'guest' if not logged in
+export function getSystemPrompt() {
+    const username = localStorage.getItem('github_username') || 'guest';
+    return `${username}/studio>`;
+}
+
 let currentMode = "main";
 const registry = {};
-
 const usedToolsInSession = new Set();
+
+// INITIALIZE PROMPT ON BOOT: Set the initial prompt string dynamically
+promptSpan.textContent = getSystemPrompt();
 
 export function print(text) {
     const line = document.createElement('div');
@@ -106,7 +113,8 @@ window.addEventListener('keydown', (e) => {
             const activeTool = registry[currentMode];
             if (activeTool && activeTool.onExit) activeTool.onExit();
             usedToolsInSession.delete(currentMode);
-            setMode("main", SYSTEM_PROMPT);
+            // Dynamic callback call here on exit:
+            setMode("main", getSystemPrompt());
         }
     }
 });
@@ -130,7 +138,8 @@ cmdInput.addEventListener('keydown', async (e) => {
             return;
         }
 
-        print(`${SYSTEM_PROMPT}${input.toLowerCase()}`);
+        // Print using the dynamic prompt layout
+        print(`${getSystemPrompt()}${input.toLowerCase()}`);
         const command = input.trim().toLowerCase();
         const baseCommand = command.split('/')[0];
 
@@ -154,6 +163,8 @@ cmdInput.addEventListener('keydown', async (e) => {
             if (command.includes('/')) {
                 await registry[baseCommand].handleInput(input);
             }
+        } else if (command === 'hello') {
+            outputDiv.textContent = 'hello, this is darshseraphic, nice to meet you!';
         } else {
             print(`error: unrecognized command "${command}"`);
         }
