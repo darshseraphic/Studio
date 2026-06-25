@@ -106,3 +106,9 @@ onExit: () => {
     calculatorSessionLines = [];
     print("system: exited calculator mode.");
 }
+
+// Add this property directly inside your calculator tool configuration object
+clearBuffer: () => {
+    // Replace 'calcHistoryLines' with whatever your calculator variable is named
+    calcHistoryLines = []; 
+}

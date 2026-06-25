@@ -16,7 +16,7 @@ if (promptSpan) {
     promptSpan.textContent = getSystemPrompt();
 }
 
-// Updated to return the created line element so tools can track their specific DOM rows
+// Ensure print returns the line element so tools like html can manage their layout rows
 export function print(text) {
     const line = document.createElement('div');
     line.textContent = text;
@@ -40,13 +40,14 @@ export function setMode(modeName, promptText = "") {
     }
 }
 
-function handleGlobalSave() {
+// ROOT FIX: Turned into an async function to process uploads sequentially
+async function handleGlobalSave() {
     let savedAny = false;
     
     if (usedToolsInSession.has('note') && registry['note'] && typeof registry['note'].getLines === 'function') {
         const notes = registry['note'].getLines();
         if (notes && notes.trim() !== '') { 
-            download(notes, 'note.txt'); 
+            await download(notes, 'note.txt'); // ROOT FIX: Added await
             savedAny = true; 
         }
     }
@@ -54,7 +55,7 @@ function handleGlobalSave() {
     if (usedToolsInSession.has('calculator') && registry['calculator'] && typeof registry['calculator'].getLines === 'function') {
         const calc = registry['calculator'].getLines();
         if (calc && calc.trim() !== '') { 
-            download(calc, 'calculator.txt'); 
+            await download(calc, 'calculator.txt'); // ROOT FIX: Added await
             savedAny = true; 
         }
     }
@@ -62,7 +63,7 @@ function handleGlobalSave() {
     if (usedToolsInSession.has('weather') && registry['weather'] && typeof registry['weather'].getLines === 'function') {
         const weatherData = registry['weather'].getLines();
         if (weatherData && weatherData.trim() !== '') { 
-            download(weatherData, 'weather.csv'); 
+            await download(weatherData, 'weather.csv'); // ROOT FIX: Added await
             savedAny = true; 
         }
     }
@@ -70,7 +71,7 @@ function handleGlobalSave() {
     if (usedToolsInSession.has('html') && registry['html'] && typeof registry['html'].getLines === 'function') {
         const htmlCode = registry['html'].getLines();
         if (htmlCode && htmlCode.trim() !== '') { 
-            download(htmlCode, 'index.html'); 
+            await download(htmlCode, 'index.html'); // ROOT FIX: Added await
             savedAny = true; 
         }
     }
@@ -124,7 +125,10 @@ window.addEventListener('keydown', (e) => {
         if (currentMode !== "main") {
             const activeTool = registry[currentMode];
             if (activeTool && typeof activeTool.onExit === 'function') activeTool.onExit();
-            usedToolsInSession.delete(currentMode);
+            
+            // ROOT FIX: Removed usedToolsInSession.delete(currentMode);
+            // This ensures exited tools remain trackable when global save runs!
+            
             setMode("main", getSystemPrompt());
             if (cmdInput) {
                 cmdInput.value = '';
@@ -154,7 +158,6 @@ if (cmdInput) {
     });
 
     cmdInput.addEventListener('keydown', async (e) => {
-        // NATIVE IDE BACKSPACE: Intercept when cursor is at the very start of the input line
         if (e.key === 'Backspace' && cmdInput.selectionStart === 0 && cmdInput.selectionEnd === 0) {
             if (currentMode !== "main") {
                 const activeTool = registry[currentMode];
@@ -164,15 +167,9 @@ if (cmdInput) {
                     
                     if (previousLineText !== null) {
                         e.preventDefault();
-                        
-                        // Merge the lines together seamlessly inside the editable area
                         cmdInput.value = previousLineText + currentInputText;
-                        
-                        // Adjust dynamic height dimensions
                         cmdInput.style.height = '26px';
                         cmdInput.style.height = cmdInput.scrollHeight + 'px';
-                        
-                        // Set the cursor exactly at the junction point (where the newline used to be)
                         cmdInput.setSelectionRange(previousLineText.length, previousLineText.length);
                         return;
                     }
@@ -193,7 +190,8 @@ if (cmdInput) {
                 const activeTool = registry[currentMode];
                 if (activeTool) {
                     if (input.trim().toLowerCase() === 'save') {
-                        handleGlobalSave();
+                        print(`${activeTool.prompt || ''}${input.toLowerCase()}`);
+                        await handleGlobalSave();
                     } else if (typeof activeTool.handleInput === 'function') {
                         activeTool.handleInput(input);
                     }
@@ -205,12 +203,41 @@ if (cmdInput) {
             const command = input.trim().toLowerCase();
             const baseCommand = command.split('/')[0];
 
+            // ADDED FEATURE: The end/targeted session destruction router parsing engine
+            if (baseCommand === 'end') {
+                const targetTool = command.split('/')[1];
+                if (!targetTool) {
+                    // Global hard clean: wipe all history references across everything
+                    usedToolsInSession.clear();
+                    Object.keys(registry).forEach(toolName => {
+                        if (registry[toolName] && typeof registry[toolName].clearBuffer === 'function') {
+                            registry[toolName].clearBuffer();
+                        }
+                    });
+                    print("system: all active tool session states and tracking logs have been completely wiped.");
+                } else {
+                    // Granular clean: safely wipe individual sub-application caches out of active memory
+                    if (usedToolsInSession.has(targetTool)) {
+                        usedToolsInSession.delete(targetTool);
+                        if (registry[targetTool] && typeof registry[targetTool].clearBuffer === 'function') {
+                            registry[targetTool].clearBuffer();
+                        }
+                        print(`system: session memory logs for [${targetTool}] have been closed and destroyed.`);
+                    } else {
+                        print(`warning: no active session trace or buffer records found for tool "${targetTool}".`);
+                    }
+                }
+                return;
+            }
+
             if (command === 'help') {
                 print("available core commands:");
                 print("  help       - display this log");
                 print("  clear      - erase terminal output window");
                 print("  github     - configure remote github sync workspace environment");
                 print("  save       - download all session logs to files (or sync to cloud repository)");
+                print("  end        - wipe all tool memories, history, and active sessions completely");
+                print("  end/[tool] - close, erase, and drop memory buffers for a specific tool only");
                 print("  note       - start note-taking session");
                 print("  calculator - start terminal calculator mode");
                 print("  weather    - fetch current weather forecast table for a location (use: weather/city name)");
@@ -218,7 +245,7 @@ if (cmdInput) {
             } else if (command === 'clear') {
                 if (outputDiv) outputDiv.textContent = '';
             } else if (command === 'save') {
-                handleGlobalSave();
+                await handleGlobalSave();
             } else if (command === 'hello') {
                 if (outputDiv) outputDiv.textContent = 'hello, this is darshseraphic, nice to meet you!';
             } else if (registry[baseCommand]) {

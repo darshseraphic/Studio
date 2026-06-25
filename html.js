@@ -11,18 +11,17 @@ function updateLineNumberPrompt() {
 }
 
 const htmlTool = {
-    helpText: "open an interactive html ide vault. type 'run' to execute, 'undo' to remove last line, 'exit' to quit.",
+    helpText: "open an interactive html ide vault. type 'run' to execute, 'undo' to remove last line, 'clean' to clear, 'copy' to copy code, 'exit' to quit.",
     prompt: "01 | ",
     
     onEnter: async () => {
         print("system: entering live html ide environment...");
         print("--------------------------------------------------");
         print("instructions: paste or type your markup code.");
-        print("commands: type 'run' to preview | type 'undo' to delete last line | type 'exit' to save.");
+        print("commands: run | undo | clean | copy | exit");
         print("--------------------------------------------------");
 
-        editorLines = [];
-        editorElements = [];
+        // Safe tracking restoration: prevents onEnter from wiping records across switches
         updateLineNumberPrompt();
     },
 
@@ -63,6 +62,37 @@ const htmlTool = {
         }
 
         const cleanInput = input.trim().toLowerCase();
+
+        // REMOVE WHOLE CODE FROM THE EDITOR BUFFER & SCREEN
+        if (cleanInput === 'clean') {
+            editorElements.forEach(el => {
+                if (el && el.parentNode) {
+                    el.parentNode.removeChild(el);
+                }
+            });
+            editorLines = [];
+            editorElements = [];
+            print("system: code editor buffer completely cleaned.");
+            updateLineNumberPrompt();
+            return;
+        }
+
+        // COPY WHOLE CODE FROM LINE 1 TO CURRENT LINE TO CLIPBOARD
+        if (cleanInput === 'copy') {
+            if (editorLines.length === 0) {
+                print("warning: source layout buffer is empty. nothing to copy!");
+            } else {
+                const fullHtmlContent = editorLines.join('\n');
+                try {
+                    await navigator.clipboard.writeText(fullHtmlContent);
+                    print("system: entire code buffer successfully copied to clipboard!");
+                } catch (err) {
+                    print("error: browser clipboard access denied. could not copy code automatically.");
+                }
+            }
+            updateLineNumberPrompt();
+            return;
+        }
 
         if (cleanInput === 'undo') {
             if (editorLines.length === 0) {
@@ -116,6 +146,11 @@ const htmlTool = {
     },
     getLines: () => {
         return editorLines.join('\n');
+    },
+    // API INTERFACE FOR END COMMAND HOOKS
+    clearBuffer: () => {
+        editorLines = [];
+        editorElements = [];
     }
 };
 

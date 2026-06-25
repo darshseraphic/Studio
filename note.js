@@ -30,3 +30,9 @@ onExit: () => {
     noteSessionLines = [];
     print("system: exited note mode.");
 }
+
+// Add this property directly inside your noteTool object
+clearBuffer: () => {
+    noteSessionLines = [];
+    localStorage.removeItem('note');
+}

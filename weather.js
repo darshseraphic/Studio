@@ -201,3 +201,9 @@ onExit: () => {
         weatherSessionLines = []; 
         print("system: exited weather mode.");
     }
+
+    // Add this property directly inside your weather tool configuration object
+clearBuffer: () => {
+    // Replace 'weatherLogLines' with whatever your weather history variable is named
+    weatherLogLines = []; 
+}
