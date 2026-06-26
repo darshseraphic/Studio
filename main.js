@@ -101,13 +101,12 @@ async function handleToolPull(modeName) {
         print(`system: pulling ${filename} from your repository [${repo}]...`);
         const content = await registry['github'].pull(filename);
         if (content !== null && content !== undefined) {
+            print(`system: ${filename} pulled and loaded successfully.`);
             usedToolsInSession.add(modeName);
-            if (modeName === 'html' && typeof activeTool.handleInput === 'function') {
-                await activeTool.handleInput('clean');
-            }
-            if (typeof activeTool.handleInput === 'function') {
+            if (typeof activeTool.loadPulled === 'function') {
+                await activeTool.loadPulled(content);
+            } else if (typeof activeTool.handleInput === 'function') {
                 await activeTool.handleInput(content);
-                print(`system: ${filename} pulled and loaded successfully.`);
             }
         } else {
             print(`error: failed to pull ${filename} from GitHub.`);
@@ -280,6 +279,31 @@ if (cmdInput) {
                 return;
             }
 
+            if (baseCommand === 'edit') {
+                const targetTool = command.split('/')[1];
+                if (!targetTool) {
+                    print("error: specify a tool to edit, e.g. edit/note or edit/html");
+                    return;
+                }
+                const tool = registry[targetTool];
+                if (!tool || typeof tool.loadPulled !== 'function' || typeof tool.getLines !== 'function') {
+                    print(`error: "${targetTool}" does not support edit mode.`);
+                    return;
+                }
+
+                usedToolsInSession.add(targetTool);
+                setMode(targetTool, tool.prompt || "");
+
+                const existing = tool.getLines();
+                if (existing && existing.trim() !== '') {
+                    print(`system: entering ${targetTool} edit mode — existing content loaded below.`);
+                    await tool.loadPulled(existing);
+                } else {
+                    print(`system: entering ${targetTool} edit mode — buffer is currently empty.`);
+                }
+                return;
+            }
+
             if (command === 'help') {
                 print("available core commands:");
                 print("  help       - display this log");
@@ -288,6 +312,7 @@ if (cmdInput) {
                 print("  save       - download all session logs to files (or sync to cloud repository)");
                 print("  pull       - pull and restore all active session logs from cloud repository");
                 print("  pull/[tool]- pull and restore cloud data for a specific tool only");
+                print("  edit/[tool]- enter a tool's mode WITHOUT wiping its existing content");
                 print("  end        - wipe all tool memories, history, and active sessions completely");
                 print("  end/[tool] - close, erase, and drop memory buffers for a specific tool only");
                 print("  note       - start note-taking session");

@@ -24,6 +24,23 @@ const calculator = {
     },
     getLines: () => {
         return calcSessionLines.join('\n');
+    },
+    loadPulled: (content) => {
+        const lines = content.split(/\r\n|\r|\n/);
+        calcSessionLines = [];
+        for (let i = 0; i < lines.length; i += 2) {
+            const inputLine = lines[i];
+            const resultLine = lines[i + 1] !== undefined ? lines[i + 1] : '';
+            if (inputLine === undefined || inputLine === '') continue;
+            print(inputLine);
+            print(resultLine);
+            calcSessionLines.push(`${inputLine}\n${resultLine}`);
+        }
+        localStorage.setItem('calculator', JSON.stringify(calcSessionLines));
+    },
+    clearBuffer: () => {
+        calcSessionLines = [];
+        localStorage.removeItem('calculator');
     }
 };
 
@@ -101,8 +118,3 @@ function evaluateExpression(expression) {
 }
 
 registerTool('calculator', calculator);
-
-onExit: () => {
-    calculatorSessionLines = []; // or whatever your array name is
-    print("system: exited calculator mode.");
-}

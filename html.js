@@ -76,7 +76,6 @@ const htmlTool = {
                 const fullHtmlContent = editorLines.join('\n');
                 try {
                     await navigator.clipboard.writeText(fullHtmlContent);
-                    print("system: entire code buffer successfully copied to clipboard!");
                 } catch (err) {
                     print("error: browser clipboard access denied. could not copy code automatically.");
                 }
@@ -94,7 +93,6 @@ const htmlTool = {
                 if (removedElement && removedElement.parentNode) {
                     removedElement.parentNode.removeChild(removedElement);
                 }
-                print(`system: removed line ${String(editorLines.length + 1).padStart(2, '0')}: "${removed}"`);
             }
             updateLineNumberPrompt();
             return;
@@ -106,8 +104,6 @@ if (cleanInput === 'run') {
                 updateLineNumberPrompt();
                 return;
             }
-
-            print("system: compiling source markup and launching application sandbox...");
             const fullHtmlContent = editorLines.join('\n');
             const escapedHtml = btoa(unescape(encodeURIComponent(fullHtmlContent)));
             const sandboxWrapper = `
@@ -143,7 +139,6 @@ if (cleanInput === 'run') {
             return;
         }
 
-        // Standard single line type entry
         const currentLineNum = editorLines.length + 1;
         const formattedNum = String(currentLineNum).padStart(2, '0');
         const el = print(`${formattedNum} | ${input}`);

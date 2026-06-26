@@ -184,16 +184,25 @@ const weather = {
     },
     getLines: () => {
         return weatherSessionLines.join('\n');
+    },
+    loadPulled: (content) => {
+        const lines = content.split(/\r\n|\r|\n/).filter(l => l.trim() !== '');
+        weatherSessionLines = lines;
+
+        const recordCount = Math.floor(lines.length / 6);
+        for (let i = 0; i < recordCount; i++) {
+            const base = i * 6;
+            const title = (lines[base] || '').split(',')[1] || 'unknown location';
+            const dateTime = (lines[base + 1] || '').split(',').slice(1).join(',') || '';
+            print(`system: restored record — ${title} (${dateTime})`);
+        }
+
+        localStorage.setItem('weather', JSON.stringify(weatherSessionLines));
+    },
+    clearBuffer: () => {
+        weatherSessionLines = [];
+        localStorage.removeItem('weather');
     }
 };
 
 registerTool('weather', weather);
-
-onExit: () => {
-        weatherSessionLines = []; 
-        print("system: exited weather mode.");
-    }
-
-clearBuffer: () => {
-    weatherLogLines = []; 
-}

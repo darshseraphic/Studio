@@ -19,18 +19,17 @@ const noteTool = {
     },
     getLines: () => {
         return noteSessionLines.join('\n');
+    },
+    loadPulled: (content) => {
+        const lines = content.split(/\r\n|\r|\n/);
+        noteSessionLines = lines;
+        lines.forEach(line => print(line));
+        localStorage.setItem('note', JSON.stringify(noteSessionLines));
+    },
+    clearBuffer: () => {
+        noteSessionLines = [];
+        localStorage.removeItem('note');
     }
 };
 
 registerTool('note', noteTool);
-
-onExit: () => {
-    noteSessionLines = [];
-    print("system: exited note mode.");
-}
-
-// Add this property directly inside your noteTool object
-clearBuffer: () => {
-    noteSessionLines = [];
-    localStorage.removeItem('note');
-}
