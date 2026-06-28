@@ -73,7 +73,7 @@ export const editorTool = {
                 editorElements = [];
                 setMode("main", getSystemPrompt());
             } else {
-                print(`The file is not exist in the specific repository or directory. Would you like to create ${pendingCreationFile}, [Yes/no]?`);
+                print(`The file does not exist in the specified repository or directory. Would you like to create ${pendingCreationFile} [Yes/no]?`);
             }
             return;
         }
@@ -113,10 +113,15 @@ export const editorTool = {
             // A. Guardrail Check: Universal File Extension Matrix Assessment
             const parts = filename.split('.');
             const ext = parts.length > 1 ? parts.pop().toLowerCase() : '';
-            const knownExtensions = ['txt', 'md', 'js', 'html', 'css', 'json', 'py', 'sh', 'ts', 'jsx', 'tsx', 'yml', 'yaml', 'c', 'cpp', 'h'];
+            const knownExtensions = [
+                'txt', 'md', 'html', 'css', 'js', 'json', 'ts', 'jsx', 'tsx', 
+                'py', 'rb', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'php', 'sh', 
+                'dart', 'yml', 'yaml', 'h'
+            ];
             
             if (!ext || !knownExtensions.includes(ext)) {
-                print("This extension isn't in the matrix, try different one");
+                print("error: this file extension is not supported by the environment system matrix.");
+                print(`accepted matrix models: ${knownExtensions.join(', ')}`);
                 editingFile = "";
                 editorLines = [];
                 editorElements = [];
@@ -139,7 +144,7 @@ export const editorTool = {
 
             if (content === null) {
                 // Interactive trigger prompt for missing file assets
-                print(`The file is not exist in the specific repository or directory. Would you like to create ${filename}, [Yes/no]?`);
+                print(`The file does not exist in the specified repository or directory. Would you like to create ${filename} [Yes/no]?`);
                 pendingCreationFile = filename;
                 setMode('editor', '> '); 
                 return;

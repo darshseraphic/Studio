@@ -4,7 +4,7 @@ let activeRepo = localStorage.getItem('repository') || '';
 let pendingRepoCreation = null;
 
 const REPO_NAME_REGEX = /^[a-zA-Z0-9._-]+$/;
-const SAFE_FILE_NAME_REGEX = /^[a-zA-Z0-9._\-\/]+$/;
+const SAFE_FILE_NAME_REGEX = /^[a-zA-Z0-9._\- \/]+$/;
 const AUTH_TOKEN_REGEX = /^[a-zA-Z0-9_=\-]+$/;
 
 function sanitizeInputString(str) {
@@ -36,7 +36,6 @@ export async function fetchRepoTree(repoName, subDirectoryPath = '') {
 
         if (!res.ok) {
             if (res.status === 404) {
-                // Return empty if the nested path doesn't exist yet
                 return [];
             }
             print(`error: directory retrieval rejected by GitHub with status ${res.status}.`);
@@ -51,7 +50,6 @@ export async function fetchRepoTree(repoName, subDirectoryPath = '') {
                 path: node.path
             }));
         } else if (structuralData && typeof structuralData === 'object') {
-
             return [{ name: structuralData.name, type: 'file', path: structuralData.path }];
         }
         return [];
@@ -60,7 +58,6 @@ export async function fetchRepoTree(repoName, subDirectoryPath = '') {
         return [];
     }
 }
-
 
 export async function pushFileToGitHub(filePath, content) {
     const rawToken = localStorage.getItem('user');
@@ -82,7 +79,12 @@ export async function pushFileToGitHub(filePath, content) {
     const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFilePath}`;
 
     try {
-        const base64Content = btoa(String.fromCharCode(...new TextEncoder().encode(content)));
+        const uint8Array = new TextEncoder().encode(content);
+        let binaryString = '';
+        for (let i = 0; i < uint8Array.length; i++) {
+            binaryString += String.fromCharCode(uint8Array[i]);
+        }
+        const base64Content = btoa(binaryString);
         let sha = null;
     
         const fileCheck = await fetch(apiPath, {
@@ -100,8 +102,9 @@ export async function pushFileToGitHub(filePath, content) {
             }
         }
 
+        const actionType = sha ? 'Update' : 'Create';
         const payload = {
-            message: `Initialize VFS write commit: ${sanitizeInputString(filePath)}`,
+            message: `${actionType} environment workspace tracking resource: ${sanitizeInputString(filePath)}`,
             content: base64Content
         };
 
@@ -119,20 +122,7 @@ export async function pushFileToGitHub(filePath, content) {
             body: JSON.stringify(payload)
         });
 
-        if (!pushRes.ok) {
-            if (pushRes.status === 404) {
-                print(`error: repository '${rawRepo}' not found under @${rawUsername}.`);
-            } else if (pushRes.status === 403) {
-                print("error: github access forbidden (403). your token lacks fine-grained repository content permissions.");
-            } else if (pushRes.status === 401) {
-                print("error: github authentication failed (401). token is invalid or expired.");
-            } else {
-                print(`error: sync rejected by GitHub with HTTP status ${pushRes.status}.`);
-            }
-            return false;
-        }
-
-        return true;
+        return pushRes.ok;
     } catch (e) {
         print(`error: networking error during push connection: ${e.message}`);
         return false;
@@ -163,21 +153,7 @@ export async function pullFileFromGitHub(filePath) {
             }
         });
 
-        if (!res.ok) {
-            if (res.status === 404) {
-                return null;
-            } else if (res.status === 403) {
-                print("error: github access forbidden (403). check token repository-scope permissions.");
-            } else {
-                print(`error: pull failed with HTTP status ${res.status}.`);
-            }
-            return null;
-        }
-
-        const contentType = res.headers.get("content-type");
-        if (contentType && !contentType.includes("application/json")) {
-            return null;
-        }
+        if (!res.ok) return null;
 
         const data = await res.json();
         if (data && typeof data.content === 'string') {
@@ -191,8 +167,71 @@ export async function pullFileFromGitHub(filePath) {
         }
         return null;
     } catch (e) {
-        print(`error: networking error during pull connection: ${e.message}`);
         return null;
+    }
+}
+
+// Universal remote object teardown stream for deleting files and subdirectories on GitHub
+export async function deletePathFromGitHub(filePath) {
+    const rawToken = localStorage.getItem('user');
+    const rawUsername = localStorage.getItem('github_username');
+    const rawRepo = localStorage.getItem('repository');
+
+    if (!rawToken || !rawUsername || !rawRepo) return false;
+    if (!AUTH_TOKEN_REGEX.test(rawToken) || !REPO_NAME_REGEX.test(rawRepo)) return false;
+    if (!SAFE_FILE_NAME_REGEX.test(filePath) || filePath.includes('..')) return false;
+
+    const username = encodeURIComponent(rawUsername);
+    const repo = encodeURIComponent(rawRepo);
+    const safeFilePath = filePath.split('/').map(p => encodeURIComponent(p)).join('/');
+    const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFilePath}`;
+
+    try {
+        const res = await fetch(apiPath, {
+            method: 'GET',
+            headers: { 
+                'Authorization': `Bearer ${rawToken}`,
+                'Accept': 'application/vnd.github+json'
+            }
+        });
+
+        if (!res.ok) {
+            if (res.status === 404) return true; // File or folder doesn't exist on remote, treat as success
+            return false;
+        }
+
+        const data = await res.json();
+
+        // Branch Handler 1: Target path points to a directory structure array
+        if (Array.isArray(data)) {
+            let overallSuccess = true;
+            for (const node of data) {
+                // Recursively delete all items discovered inside this directory node
+                const success = await deletePathFromGitHub(node.path);
+                if (!success) overallSuccess = false;
+            }
+            return overallSuccess;
+        } 
+        // Branch Handler 2: Target path points to an individual file instance
+        else if (data && typeof data.sha === 'string') {
+            const deleteRes = await fetch(apiPath, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${rawToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/vnd.github+json'
+                },
+                body: JSON.stringify({
+                    message: `Purge workspace resource node: ${sanitizeInputString(filePath)}`,
+                    sha: data.sha
+                })
+            });
+            return deleteRes.ok;
+        }
+        return false;
+    } catch (e) {
+        print(`error: network communication error during remote deletion stream: ${e.message}`);
+        return false;
     }
 }
 
@@ -202,6 +241,7 @@ const githubTool = {
     sync: pushFileToGitHub,
     pull: pullFileFromGitHub,
     tree: fetchRepoTree,
+    delete: deletePathFromGitHub, // Registered delete integration
     
     onEnter: async () => {
         print("system: github configuration subsystem activated.");
@@ -217,7 +257,7 @@ const githubTool = {
                 print("active workspace repo: none contextually bound (use root traversal or 'repo/name')");
             }
         } else {
-            print("status: unauthenticated. authorize workspace by generating a token and entering: login/token");
+            print("status: unauthenticated. authorize workspace by generating a personal access token and entering: login/token");
         }
         print("press CTRL + E to shift back to your main structural shell loop prompt.");
     },
@@ -258,8 +298,6 @@ const githubTool = {
                         localStorage.setItem('user', value);
                         localStorage.setItem('github_username', userData.login);
                         print(`system: successfully authenticated as @${sanitizeInputString(userData.login)}!`);
-                        
-                        // Force kernel refresh configuration states synchronously
                         const { setMode } = await import('./main.js');
                         setMode("main", getSystemPrompt());
                     } else {
@@ -279,7 +317,7 @@ const githubTool = {
             const username = localStorage.getItem('github_username');
 
             if (!token || !username) {
-                print("error: you must execute authentication log-in verification routines before tracking a workspace repo.");
+                print("error: you must log in and verify your credentials before tracking a workspace repository.");
                 return;
             }
             if (!value) {
@@ -287,7 +325,7 @@ const githubTool = {
                 return;
             }
             if (!REPO_NAME_REGEX.test(value) || value.length > 100) {
-                print("error: illegal repository name formatting string structure target.");
+                print("error: invalid repository name format or character structure detected.");
                 return;
             }
 
@@ -310,9 +348,9 @@ const githubTool = {
                 } else if (checkRes.status === 404) {
                     pendingRepoCreation = value;
                     print(`warning: repository '${sanitizeInputString(value)}' does not exist yet.`);
-                    print("type 'github>confirm' to automatically initialize a private backup repository under this name.");
+                    print("type 'confirm' to automatically initialize a private backup repository under this name.");
                 } else {
-                    print("error: unauthorized workspace retrieval verification parameters encountered.");
+                    print("error: unauthorized or invalid workspace verification parameters encountered.");
                 }
             } catch (e) {
                 print("error: network communication check with github api timed out.");
@@ -323,7 +361,7 @@ const githubTool = {
         if (action === 'confirm') {
             const token = localStorage.getItem('user');
             if (!token) {
-                print("error: active target authorization session context not initialized.");
+                print("error: active authorization session context is not initialized.");
                 return;
             }
             if (!pendingRepoCreation) {
@@ -347,7 +385,8 @@ const githubTool = {
                     body: JSON.stringify({
                         name: repoToCreate,
                         private: true,
-                        description: "Studio cloud sync environment tracking workspace storage"
+                        description: "Studio cloud sync environment tracking workspace storage",
+                        auto_init: true 
                     })
                 });
 
