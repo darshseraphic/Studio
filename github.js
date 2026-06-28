@@ -50,7 +50,7 @@ export async function pushFileToGitHub(fileName, content) {
         }
 
         const payload = {
-            message: `terminal session auto-sync: ${sanitizeInputString(fileName)}`,
+            message: `Initialize commit: ${sanitizeInputString(fileName)}`,
             content: base64Content
         };
 
@@ -101,7 +101,6 @@ export async function pullFileFromGitHub(fileName) {
     const repo = encodeURIComponent(rawRepo);
     const safeFileName = encodeURIComponent(fileName);
 
-    // CRITICAL: Double-check that this uses backticks (`) and starts with https://
     const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFileName}`;
 
     try {
@@ -124,7 +123,6 @@ export async function pullFileFromGitHub(fileName) {
             return null;
         }
 
-        // Safety Check: Verify if we actually received JSON data
         const contentType = res.headers.get("content-type");
         if (contentType && !contentType.includes("application/json")) {
             const badText = await res.text();
@@ -150,7 +148,7 @@ export async function pullFileFromGitHub(fileName) {
 }
 
 const githubTool = {
-    helpText: "configure cloud sync backups. commands: login/token, repo/name, confirm, logout",
+    helpText: "configure cloud sync backups. commands: login/token, repo/name, confirm, logout, or github/reponame/filename/save",
     prompt: "github>",
     sync: pushFileToGitHub,
     pull: pullFileFromGitHub,
@@ -181,6 +179,65 @@ const githubTool = {
         print(`github>${sanitizeInputString(cleanInput)}`);
 
         const parts = cleanInput.split('/');
+        
+        // --- Pipeline Interceptor Implementation ---
+        let isPipelineAction = false;
+        let targetRepo = '';
+        let targetFile = '';
+
+        if (parts.length === 4 && parts[0].trim().toLowerCase() === 'github' && parts[3].trim().toLowerCase() === 'save') {
+            isPipelineAction = true;
+            targetRepo = parts[1].trim();
+            targetFile = parts[2].trim();
+        } else if (parts.length === 3 && parts[2].trim().toLowerCase() === 'save') {
+            isPipelineAction = true;
+            targetRepo = parts[0].trim();
+            targetFile = parts[1].trim();
+        }
+
+        if (isPipelineAction) {
+            const token = localStorage.getItem('user');
+            const username = localStorage.getItem('github_username');
+
+            if (!token || !username) {
+                print("error: you must execute authentication log-in verification routines before triggering a pipeline save.");
+                return;
+            }
+            if (!REPO_NAME_REGEX.test(targetRepo) || targetRepo.length > 100) {
+                print("error: illegal repository name formatting string structure target.");
+                return;
+            }
+            if (!SAFE_FILE_NAME_REGEX.test(targetFile) || targetFile.includes('..')) {
+                print("error: illegal file name formatting string structure target.");
+                return;
+            }
+
+            // Sync structural targets seamlessly
+            localStorage.setItem('repository', targetRepo);
+            activeRepo = targetRepo;
+
+            try {
+                const { htmlTool } = await import('./html.js');
+                const content = htmlTool.getLines();
+
+                if (!content || content.trim() === '') {
+                    print("warning: source layout buffer is empty. write some html code first!");
+                    return;
+                }
+
+                print(`system: executing unified pipeline save for '${sanitizeInputString(targetFile)}' to '${sanitizeInputString(targetRepo)}'...`);
+                const success = await pushFileToGitHub(targetFile, content);
+                if (success) {
+                    print(`system: successfully initialized commit and pushed direct changes!`);
+                    import('./main.js').then(m => m.setMode("main", m.getSystemPrompt()));
+                }
+            } catch (e) {
+                print(`error: critical sync error during pipeline communication: ${e.message}`);
+            }
+            return;
+        }
+        // --- End of Pipeline Interceptor ---
+
         const action = parts[0].trim().toLowerCase();
         const value = parts.slice(1).join('/').trim();
 
@@ -297,7 +354,7 @@ const githubTool = {
                     body: JSON.stringify({
                         name: repoToCreate,
                         private: true,
-                        description: "automated backup terminal logs repository"
+                        description: "Studio repository"
                     })
                 });
 
@@ -326,7 +383,7 @@ const githubTool = {
             return;
         }
 
-        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, logout");
+        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, logout, or github/reponame/filename/save");
     },
     onExit: () => {
         print("system: exited github config mode.");

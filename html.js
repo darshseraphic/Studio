@@ -98,7 +98,7 @@ const htmlTool = {
             return;
         }
 
-if (cleanInput === 'run') {
+        if (cleanInput === 'run') {
             if (editorLines.length === 0) {
                 print("warning: source layout buffer is empty. write some html code first!");
                 updateLineNumberPrompt();
@@ -110,7 +110,7 @@ if (cleanInput === 'run') {
                 <!DOCTYPE html>
                 <html lang="en">
                 <head>
-                    <meta charset="UTF-8">
+                    <meta charset="UTF-8);
                     <title>Application Sandbox Preview</title>
                     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'none';">
                     <style>
@@ -161,3 +161,4 @@ if (cleanInput === 'run') {
 };
 
 registerTool('html', htmlTool);
+export { htmlTool };
