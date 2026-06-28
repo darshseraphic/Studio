@@ -310,11 +310,6 @@ if (cmdInput) {
                 print("  clear      - erase terminal output window");
                 print("  github     - configure remote github sync workspace environment");
                 print("  save       - download all session logs to files (or sync to cloud repository)");
-                print("  pull       - pull and restore all active session logs from cloud repository");
-                print("  pull/[tool]- pull and restore cloud data for a specific tool only");
-                print("  edit/[tool]- enter a tool's mode WITHOUT wiping its existing content");
-                print("  end        - wipe all tool memories, history, and active sessions completely");
-                print("  end/[tool] - close, erase, and drop memory buffers for a specific tool only");
                 print("  note       - start note-taking session");
                 print("  calculator - start terminal calculator mode");
                 print("  weather    - fetch current weather forecast table for a location (use: weather/city name)");
