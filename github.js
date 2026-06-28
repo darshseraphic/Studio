@@ -11,7 +11,58 @@ function sanitizeInputString(str) {
     return str.trim().replace(/[<>'"\`]/g, '');
 }
 
-export async function pushFileToGitHub(fileName, content) {
+export async function fetchRepoTree(repoName, subDirectoryPath = '') {
+    const rawToken = localStorage.getItem('user');
+    const rawUsername = localStorage.getItem('github_username');
+
+    if (!rawToken || !rawUsername) {
+        print("error: authentication token signature missing. login verified credential profiles required.");
+        return [];
+    }
+
+    const username = encodeURIComponent(rawUsername);
+    const repo = encodeURIComponent(repoName);
+    const cleanSubPath = encodeURIComponent(subDirectoryPath);
+    const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${cleanSubPath}`;
+
+    try {
+        const res = await fetch(apiPath, {
+            method: 'GET',
+            headers: { 
+                'Authorization': `Bearer ${rawToken}`,
+                'Accept': 'application/vnd.github+json'
+            }
+        });
+
+        if (!res.ok) {
+            if (res.status === 404) {
+                // Return empty if the nested path doesn't exist yet
+                return [];
+            }
+            print(`error: directory retrieval rejected by GitHub with status ${res.status}.`);
+            return [];
+        }
+
+        const structuralData = await res.json();
+        if (Array.isArray(structuralData)) {
+            return structuralData.map(node => ({
+                name: node.name,
+                type: node.type,
+                path: node.path
+            }));
+        } else if (structuralData && typeof structuralData === 'object') {
+
+            return [{ name: structuralData.name, type: 'file', path: structuralData.path }];
+        }
+        return [];
+    } catch (err) {
+        print(`error: structural network error during directory fetching: ${err.message}`);
+        return [];
+    }
+}
+
+
+export async function pushFileToGitHub(filePath, content) {
     const rawToken = localStorage.getItem('user');
     const rawUsername = localStorage.getItem('github_username');
     const rawRepo = localStorage.getItem('repository');
@@ -21,19 +72,19 @@ export async function pushFileToGitHub(fileName, content) {
     if (!AUTH_TOKEN_REGEX.test(rawToken) || !REPO_NAME_REGEX.test(rawRepo)) {
         return false;
     }
-    if (!SAFE_FILE_NAME_REGEX.test(fileName) || fileName.includes('..')) {
+    if (!SAFE_FILE_NAME_REGEX.test(filePath) || filePath.includes('..')) {
         return false;
     }
 
     const username = encodeURIComponent(rawUsername);
     const repo = encodeURIComponent(rawRepo);
-    const safeFileName = encodeURIComponent(fileName);
-    const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFileName}`;
+    const safeFilePath = filePath.split('/').map(p => encodeURIComponent(p)).join('/');
+    const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFilePath}`;
 
     try {
         const base64Content = btoa(String.fromCharCode(...new TextEncoder().encode(content)));
         let sha = null;
-        
+    
         const fileCheck = await fetch(apiPath, {
             method: 'GET',
             headers: { 
@@ -50,7 +101,7 @@ export async function pushFileToGitHub(fileName, content) {
         }
 
         const payload = {
-            message: `Initialize commit: ${sanitizeInputString(fileName)}`,
+            message: `Initialize VFS write commit: ${sanitizeInputString(filePath)}`,
             content: base64Content
         };
 
@@ -70,9 +121,9 @@ export async function pushFileToGitHub(fileName, content) {
 
         if (!pushRes.ok) {
             if (pushRes.status === 404) {
-                print(`error: repository '${rawRepo}' not found under @${rawUsername}. create it on GitHub first.`);
+                print(`error: repository '${rawRepo}' not found under @${rawUsername}.`);
             } else if (pushRes.status === 403) {
-                print("error: github access forbidden (403). your token lacks 'Contents' write permissions.");
+                print("error: github access forbidden (403). your token lacks fine-grained repository content permissions.");
             } else if (pushRes.status === 401) {
                 print("error: github authentication failed (401). token is invalid or expired.");
             } else {
@@ -88,20 +139,20 @@ export async function pushFileToGitHub(fileName, content) {
     }
 }
 
-export async function pullFileFromGitHub(fileName) {
+export async function pullFileFromGitHub(filePath) {
     const rawToken = localStorage.getItem('user');
     const rawUsername = localStorage.getItem('github_username');
     const rawRepo = localStorage.getItem('repository');
 
     if (!rawToken || !rawUsername || !rawRepo) return null;
     if (!AUTH_TOKEN_REGEX.test(rawToken) || !REPO_NAME_REGEX.test(rawRepo)) return null;
-    if (!SAFE_FILE_NAME_REGEX.test(fileName) || fileName.includes('..')) return null;
+    if (!SAFE_FILE_NAME_REGEX.test(filePath) || filePath.includes('..')) return null;
 
     const username = encodeURIComponent(rawUsername);
     const repo = encodeURIComponent(rawRepo);
-    const safeFileName = encodeURIComponent(fileName);
+    const safeFilePath = filePath.split('/').map(p => encodeURIComponent(p)).join('/');
 
-    const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFileName}`;
+    const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFilePath}`;
 
     try {
         const res = await fetch(apiPath, {
@@ -114,9 +165,9 @@ export async function pullFileFromGitHub(fileName) {
 
         if (!res.ok) {
             if (res.status === 404) {
-                print(`error: file '${fileName}' does not exist yet in repo '${rawRepo}'. run 'save' first.`);
+                return null;
             } else if (res.status === 403) {
-                print("error: github access forbidden (403). check token permissions.");
+                print("error: github access forbidden (403). check token repository-scope permissions.");
             } else {
                 print(`error: pull failed with HTTP status ${res.status}.`);
             }
@@ -125,8 +176,6 @@ export async function pullFileFromGitHub(fileName) {
 
         const contentType = res.headers.get("content-type");
         if (contentType && !contentType.includes("application/json")) {
-            const badText = await res.text();
-            print(`error: Connected to local server fallback instead of GitHub API. Starts with: "${badText.substring(0, 25)}"`);
             return null;
         }
 
@@ -148,28 +197,29 @@ export async function pullFileFromGitHub(fileName) {
 }
 
 const githubTool = {
-    helpText: "configure cloud sync backups. commands: login/token, repo/name, confirm, logout, or github/reponame/filename/save",
+    helpText: "configure terminal verification credentials. subcommands: login/token, repo/name, confirm, logout",
     prompt: "github>",
     sync: pushFileToGitHub,
     pull: pullFileFromGitHub,
+    tree: fetchRepoTree,
     
     onEnter: async () => {
-        print("system: github workspace mode activated.");
+        print("system: github configuration subsystem activated.");
         const token = localStorage.getItem('user');
         const username = localStorage.getItem('github_username');
         const repo = localStorage.getItem('repository');
 
         if (token && username) {
-            print(`status: authenticated via stored token cache as @${sanitizeInputString(username)}`);
+            print(`status: verified authorization stream caching as @${sanitizeInputString(username)}`);
             if (repo) {
-                print(`active workspace repo: ${sanitizeInputString(repo)}`);
+                print(`active structural tracking repo context: ${sanitizeInputString(repo)}`);
             } else {
-                print("active workspace repo: none (set using repo/name)");
+                print("active workspace repo: none contextually bound (use root traversal or 'repo/name')");
             }
         } else {
-            print("status: unauthenticated. generate a token on github and login using: login/token");
+            print("status: unauthenticated. authorize workspace by generating a token and entering: login/token");
         }
-        print("press CTRL + E to return to main prompt.");
+        print("press CTRL + E to shift back to your main structural shell loop prompt.");
     },
 
     handleInput: async (input) => {
@@ -179,65 +229,6 @@ const githubTool = {
         print(`github>${sanitizeInputString(cleanInput)}`);
 
         const parts = cleanInput.split('/');
-        
-        // --- Pipeline Interceptor Implementation ---
-        let isPipelineAction = false;
-        let targetRepo = '';
-        let targetFile = '';
-
-        if (parts.length === 4 && parts[0].trim().toLowerCase() === 'github' && parts[3].trim().toLowerCase() === 'save') {
-            isPipelineAction = true;
-            targetRepo = parts[1].trim();
-            targetFile = parts[2].trim();
-        } else if (parts.length === 3 && parts[2].trim().toLowerCase() === 'save') {
-            isPipelineAction = true;
-            targetRepo = parts[0].trim();
-            targetFile = parts[1].trim();
-        }
-
-        if (isPipelineAction) {
-            const token = localStorage.getItem('user');
-            const username = localStorage.getItem('github_username');
-
-            if (!token || !username) {
-                print("error: you must execute authentication log-in verification routines before triggering a pipeline save.");
-                return;
-            }
-            if (!REPO_NAME_REGEX.test(targetRepo) || targetRepo.length > 100) {
-                print("error: illegal repository name formatting string structure target.");
-                return;
-            }
-            if (!SAFE_FILE_NAME_REGEX.test(targetFile) || targetFile.includes('..')) {
-                print("error: illegal file name formatting string structure target.");
-                return;
-            }
-
-            // Sync structural targets seamlessly
-            localStorage.setItem('repository', targetRepo);
-            activeRepo = targetRepo;
-
-            try {
-                const { htmlTool } = await import('./html.js');
-                const content = htmlTool.getLines();
-
-                if (!content || content.trim() === '') {
-                    print("warning: source layout buffer is empty. write some html code first!");
-                    return;
-                }
-
-                print(`system: executing unified pipeline save for '${sanitizeInputString(targetFile)}' to '${sanitizeInputString(targetRepo)}'...`);
-                const success = await pushFileToGitHub(targetFile, content);
-                if (success) {
-                    print(`system: successfully initialized commit and pushed direct changes!`);
-                    import('./main.js').then(m => m.setMode("main", m.getSystemPrompt()));
-                }
-            } catch (e) {
-                print(`error: critical sync error during pipeline communication: ${e.message}`);
-            }
-            return;
-        }
-        // --- End of Pipeline Interceptor ---
-
         const action = parts[0].trim().toLowerCase();
         const value = parts.slice(1).join('/').trim();
 
@@ -251,7 +242,7 @@ const githubTool = {
                 return;
             }
 
-            print("system: validating access token with github gateway...");
+            print("system: validating operational access token with GitHub cloud gateway...");
             
             try {
                 const res = await fetch('https://api.github.com/user', {
@@ -267,10 +258,12 @@ const githubTool = {
                         localStorage.setItem('user', value);
                         localStorage.setItem('github_username', userData.login);
                         print(`system: successfully authenticated as @${sanitizeInputString(userData.login)}!`);
-                        print("system: exited github config mode.");
-                        import('./main.js').then(m => m.setMode("main", m.getSystemPrompt()));
+                        
+                        // Force kernel refresh configuration states synchronously
+                        const { setMode } = await import('./main.js');
+                        setMode("main", getSystemPrompt());
                     } else {
-                        print("error: failed to retrieve valid parsing metadata profile from endpoint.");
+                        print("error: failed to safely extract parseable metadata profile from endpoint data payload.");
                     }
                 } else {
                     print("error: github rejected token credentials. verification check unauthorized.");
@@ -311,12 +304,12 @@ const githubTool = {
                 if (checkRes.ok) {
                     localStorage.setItem('repository', value);
                     activeRepo = value;
-                    print(`system: connected to existing repository: ${sanitizeInputString(value)}`);
-                    print("system: exited github config mode.");
-                    import('./main.js').then(m => m.setMode("main", m.getSystemPrompt()));
+                    print(`system: successfully set target repository to: ${sanitizeInputString(value)}`);
+                    const { setMode } = await import('./main.js');
+                    setMode("main", getSystemPrompt());
                 } else if (checkRes.status === 404) {
                     pendingRepoCreation = value;
-                    print(`warning: repository '${sanitizeInputString(value)}' does not exist.`);
+                    print(`warning: repository '${sanitizeInputString(value)}' does not exist yet.`);
                     print("type 'github>confirm' to automatically initialize a private backup repository under this name.");
                 } else {
                     print("error: unauthorized workspace retrieval verification parameters encountered.");
@@ -341,7 +334,7 @@ const githubTool = {
             const repoToCreate = pendingRepoCreation;
             pendingRepoCreation = null;
 
-            print(`system: repository not found. creating private repository '${sanitizeInputString(repoToCreate)}' automatically...`);
+            print(`system: creating private repository '${sanitizeInputString(repoToCreate)}' automatically on GitHub...`);
             
             try {
                 const createRes = await fetch('https://api.github.com/user/repos', {
@@ -354,7 +347,7 @@ const githubTool = {
                     body: JSON.stringify({
                         name: repoToCreate,
                         private: true,
-                        description: "Studio repository"
+                        description: "Studio cloud sync environment tracking workspace storage"
                     })
                 });
 
@@ -362,9 +355,10 @@ const githubTool = {
                     print(`system: successfully initialized private repository '${sanitizeInputString(repoToCreate)}'!`);
                     localStorage.setItem('repository', repoToCreate);
                     activeRepo = repoToCreate;
-                    import('./main.js').then(m => m.setMode("main", m.getSystemPrompt()));
+                    const { setMode } = await import('./main.js');
+                    setMode("main", getSystemPrompt());
                 } else {
-                    print("error: failed to automatically provision a new github repository.");
+                    print("error: failed to automatically provision a new github repository storage engine.");
                 }
             } catch (e) {
                 print("error: network communication with github api timed out.");
@@ -378,12 +372,13 @@ const githubTool = {
             localStorage.removeItem('repository');
             activeRepo = '';
             pendingRepoCreation = null;
-            print("system: logged out. token and workspace config cleared from this browser.");
-            import('./main.js').then(m => m.setMode("main", m.getSystemPrompt()));
+            print("system: authentication tracking arrays systematically cleared.");
+            const { setMode } = await import('./main.js');
+            setMode("main", getSystemPrompt());
             return;
         }
 
-        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, logout, or github/reponame/filename/save");
+        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, logout");
     },
     onExit: () => {
         print("system: exited github config mode.");

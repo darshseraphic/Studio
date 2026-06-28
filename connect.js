@@ -5,7 +5,7 @@ const tools = [
     'calculator.js',
     'weather.js',
     'github.js',
-    'html.js',
+    'editor.js',
     'time.js'
 ];
 
