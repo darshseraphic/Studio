@@ -9,7 +9,8 @@ const VALID_EXTENSIONS = [
 ];
 
 export let currentMode = "main"; 
-export let currentPath = [];
+// PERSISTENCE FIX: Load saved directory path context from localStorage on page refresh
+export let currentPath = JSON.parse(localStorage.getItem('current_path') || '[]');
 export let fileBuffers = {};
 export let virtualDirectories = new Set();
 
@@ -18,6 +19,15 @@ let pendingDeleteType = "";
 
 export const registry = {};
 const usedToolsInSession = new Set();
+
+// Helper to keep localStorage synced up with path array adjustments
+function savePathState() {
+    if (localStorage.getItem('repository')) {
+        localStorage.setItem('current_path', JSON.stringify(currentPath));
+    } else {
+        localStorage.removeItem('current_path');
+    }
+}
 
 export function getSystemPrompt() {
     const username = localStorage.getItem('github_username') || 'guest';
@@ -202,6 +212,7 @@ if (cmdInput) {
                             localStorage.removeItem('repository');
                             currentPath = [];
                             virtualDirectories.clear();
+                            savePathState();
                         }
                     } else if (pendingDeleteType === 'file') {
                         print(`system: removing local workspace content memory traces for file: '${pendingDeleteTarget}'...`);
@@ -235,6 +246,7 @@ if (cmdInput) {
                         const idx = currentPath.findIndex(p => p.toLowerCase() === pendingDeleteTarget.toLowerCase());
                         if (idx !== -1) {
                             currentPath = currentPath.slice(0, idx);
+                            savePathState();
                         }
                     }
                     print(`system: target modification sequence complete. '${pendingDeleteTarget}' deleted successfully.`);
@@ -262,6 +274,7 @@ if (cmdInput) {
             if (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`) {
                 localStorage.removeItem('repository');
                 currentPath = [];
+                savePathState();
                 setMode("main", getSystemPrompt());
                 return;
             }
@@ -277,6 +290,7 @@ if (cmdInput) {
                         }
                     }
                 });
+                savePathState();
                 setMode("main", getSystemPrompt());
                 return;
             }
@@ -302,6 +316,7 @@ if (cmdInput) {
                             }
                         }
                     });
+                    savePathState();
                     setMode("main", getSystemPrompt());
                     return;
                 }
@@ -337,6 +352,7 @@ if (cmdInput) {
                     const repoExists = await verifyRemotePath(pathTarget, '');
                     if (repoExists) {
                         localStorage.setItem('repository', pathTarget);
+                        savePathState();
                         setMode("main", getSystemPrompt());
                     } else {
                         print(`error: repository identity '${pathTarget}' does not exist or is unauthorized.`);
@@ -347,6 +363,7 @@ if (cmdInput) {
                     const pathExists = await verifyRemotePath(activeRepo, proposedPath);
                     if (pathExists) {
                         currentPath.push(pathTarget);
+                        savePathState();
                         setMode("main", getSystemPrompt());
                     } else {
                         print(`error: directory structural node components '${pathTarget}' do not exist.`);
@@ -357,6 +374,73 @@ if (cmdInput) {
 
             const firstSegment = lowerCommand.split('/')[0];
             const targetPayload = cleanCommand.split('/').slice(1).join('/');
+
+            if (firstSegment === 'fletch') {
+                const activeRepo = localStorage.getItem('repository');
+                if (!activeRepo) {
+                    print("error: no active repository detected. connect a repo using github tool first.");
+                } else {
+                    const { fetchRepoTree } = await import('./github.js');
+                    
+                    let fetchPath = "";
+                    if (currentPath.length > 0) {
+                        fetchPath = currentPath.join('/');
+                        if (targetPayload) {
+                            fetchPath += '/' + targetPayload;
+                        }
+                    } else {
+                        fetchPath = targetPayload;
+                    }
+
+                    if (targetPayload && targetPayload.includes('.')) {
+                        print(`system: fletching remote file content layout for [${fetchPath}]...`);
+                        let content = null;
+                        
+                        if (registry['github'] && typeof registry['github'].pull === 'function') {
+                            content = await registry['github'].pull(fetchPath);
+                        }
+                        if (content === null) {
+                            if (fileBuffers[fetchPath]) {
+                                content = fileBuffers[fetchPath].join('\n');
+                            } else if (fileBuffers[targetPayload]) {
+                                content = fileBuffers[targetPayload].join('\n');
+                            }
+                        }
+                        
+                        if (content !== null) {
+                            print("------------------------------------------------");
+                            print(content);
+                            print("------------------------------------------------");
+                        } else {
+                            print("error: remote system failed to retrieve file content check parameters.");
+                        }
+                        return;
+                    }
+
+                    print(`system: fletching remote directory manifest for [${fetchPath || 'root'}]...`);
+                    const treeItems = await fetchRepoTree(activeRepo, fetchPath);
+                    if (treeItems && treeItems.length > 0) {
+                        print("------------------------------------------------");
+                        const dirs = treeItems.filter(item => item.type === 'dir');
+                        const files = treeItems.filter(item => item.type === 'file');
+                        dirs.forEach(dir => {
+                            print(`-- ${dir.name}/`);
+                            virtualDirectories.add(dir.path);
+                        });
+                        files.forEach(file => {
+                            print(`-- ${file.name}`);
+                            if (!fileBuffers[file.path]) {
+                                fileBuffers[file.path] = [""];
+                            }
+                        });
+                        print("------------------------------------------------");
+                        print(`total contents tracked: ${treeItems.length} nodes.`);
+                    } else if (treeItems && treeItems.length === 0) {
+                        print("system: directory target path is completely empty.");
+                    }
+                }
+                return;
+            }
 
             if (firstSegment === 'create') {
                 if (!targetPayload) {
@@ -387,13 +471,14 @@ if (cmdInput) {
                                 name: targetPayload,
                                 private: true,
                                 description: "Studio cloud sync environment tracking workspace storage",
-                                auto_init: true // Generates default branch immediately to allow direct file pushes
+                                auto_init: true
                             })
                         });
 
                         if (createRes.ok) {
                             print(`system: successfully initialized actual remote repository '${targetPayload}' on GitHub!`);
                             localStorage.setItem('repository', targetPayload);
+                            savePathState();
                             setMode("main", getSystemPrompt());
                         } else {
                             const errData = await createRes.json().catch(() => ({}));
@@ -469,6 +554,30 @@ if (cmdInput) {
                     print("error: specify path name parameter, e.g. edit/note.txt");
                     return;
                 }
+                if (targetPayload === 'description') {
+                    const activeRepo = localStorage.getItem('repository');
+                    if (!activeRepo) {
+                        print("error: no active repository detected.");
+                        return;
+                    }
+                    if (!fileBuffers['description']) {
+                        const token = localStorage.getItem('user');
+                        const username = localStorage.getItem('github_username');
+                        try {
+                            const res = await fetch(`https://api.github.com/repos/${username}/${activeRepo}`, {
+                                headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
+                            });
+                            if (res.ok) {
+                                const data = await res.json();
+                                fileBuffers['description'] = [data.description || ""];
+                            } else {
+                                fileBuffers['description'] = [""];
+                            }
+                        } catch (e) {
+                            fileBuffers['description'] = [""];
+                        }
+                    }
+                }
                 if (registry['editor']) {
                     usedToolsInSession.add('editor');
                     setMode('editor', registry['editor'].prompt || "01 | ");
@@ -505,6 +614,39 @@ if (cmdInput) {
             if (firstSegment === 'save') {
                 if (!targetPayload) {
                     print("error: specify target save path parameters, e.g. save/index.html");
+                    return;
+                }
+                if (targetPayload === 'description') {
+                    const activeRepo = localStorage.getItem('repository');
+                    if (!activeRepo) {
+                        print("error: no active repository detected.");
+                        return;
+                    }
+                    const contentLines = fileBuffers['description'];
+                    if (!contentLines) {
+                        print("error: no local description buffer found.");
+                        return;
+                    }
+                    const token = localStorage.getItem('user');
+                    const username = localStorage.getItem('github_username');
+                    try {
+                        const res = await fetch(`https://api.github.com/repos/${username}/${activeRepo}`, {
+                            method: 'PATCH',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/vnd.github+json'
+                            },
+                            body: JSON.stringify({ description: contentLines.join('\n') })
+                        });
+                        if (res.ok) {
+                            print("system: repository description updated successfully in the cloud.");
+                        } else {
+                            print("error: failed to update repository description.");
+                        }
+                    } catch (e) {
+                        print("error: network error updating description.");
+                    }
                     return;
                 }
                 const contentLines = fileBuffers[targetPayload];
@@ -592,6 +734,30 @@ if (cmdInput) {
                 return;
             }
 
+            if (lowerCommand === 'description') {
+                const activeRepo = localStorage.getItem('repository');
+                if (!activeRepo) {
+                    print("error: no active repository detected.");
+                } else {
+                    const token = localStorage.getItem('user');
+                    const username = localStorage.getItem('github_username');
+                    try {
+                        const res = await fetch(`https://api.github.com/repos/${username}/${activeRepo}`, {
+                            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            print(`description: ${data.description || '(no description set)'}`);
+                        } else {
+                            print("error: failed to fetch repository description.");
+                        }
+                    } catch (e) {
+                        print("error: network error fetching description.");
+                    }
+                }
+                return;
+            }
+
             if (lowerCommand === 'help') {
                 const activeUsername = localStorage.getItem('github_username') || 'guest';
                 const dynamicUserCmd = `  ${activeUsername}/`.padEnd(29);
@@ -599,6 +765,7 @@ if (cmdInput) {
                 print("available core state command maps:");
                 print("  help                       - clear layout mapping diagnostics");
                 print("  clear                      - clean the terminal output viewport framework");
+                print("  refresh                    - execute program pipeline environment reboot context");
                 print("  github                     - switch context configuration sub-menus");
                 print("  editor                     - trigger universal plaintext file editor");
                 print("  edit/[file_name]           - open targeted items inside the workspace text editor");
@@ -614,8 +781,18 @@ if (cmdInput) {
                 print("  pull/[file_name]           - restore structural content configurations from cloud nodes");
                 print("  save/[file_name]           - serialize buffer arrays and execute remote pushes to cloud git");
                 print("  run/[file_name]            - compile and render document nodes to sub-sandbox tabs cleanly");
+                print("  fletch                     - list all file nodes and directories at root level");
+                print("  fletch/[directory_name]    - parse file extensions and nested nodes inside a subdirectory");
+                print("  fletch/[file_name.exten]   - display full layout code contents of a file node instantly");
+                print("  description                - fetch the current repository description");
+                print("  edit/description           - fetch the current repository description and edit it");
             } else if (lowerCommand === 'clear') {
                 if (outputDiv) outputDiv.textContent = '';
+            } else if (lowerCommand === 'refresh') {
+                // REFRESH COMMAND IMPLEMENTATION
+                print("system: rebooting environment console pipeline sync arrays...");
+                window.location.reload();
+                return;
             } else if (lowerCommand === 'hello') {
                 print('hello, this is darshseraphic, nice to meet you!');
             } else if (registry[firstSegment]) {
