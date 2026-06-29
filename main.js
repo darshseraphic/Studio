@@ -3,23 +3,19 @@ const cmdInput = document.getElementById('cmd-input');
 const themeToggle = document.getElementById('theme-toggle');
 const promptSpan = document.querySelector('.input-line span');
 
-// Extension Validation Matrix
 const VALID_EXTENSIONS = [
     'txt', 'md', 'html', 'css', 'js', 'json', 'ts', 'jsx', 'tsx', 
     'py', 'rb', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'php', 'sh', 'dart'
 ];
 
-// Stateful Virtual Path Infrastructure
 export let currentMode = "main"; 
-export let currentPath = [];     // Tracks directory depth arrays ['src', 'components']
-export let fileBuffers = {};     // Shared local workspace content memory traces
-export let virtualDirectories = new Set(); // Tracks locally created directory paths
+export let currentPath = [];
+export let fileBuffers = {};
+export let virtualDirectories = new Set();
 
-// Safe tracking slots for pending interactive deletion sequences
 let pendingDeleteTarget = "";
-let pendingDeleteType = ""; // Tracks 'repository', 'file', or 'directory'
+let pendingDeleteType = "";
 
-// FIXED: Added 'export' so editor.js and other tools can import the central tool registry
 export const registry = {};
 const usedToolsInSession = new Set();
 
@@ -60,9 +56,8 @@ export function setMode(modeName, promptText = "") {
     }
 }
 
-// SECURED: Live GitHub verification link loop with local virtual directory bypass fallback
 async function verifyRemotePath(repoName, directoryPath = '') {
-    // Check our local virtual file system first before hitting the remote API
+
     if (directoryPath && virtualDirectories.has(directoryPath)) {
         return true;
     }
@@ -75,14 +70,13 @@ async function verifyRemotePath(repoName, directoryPath = '') {
         return true; 
     }
 
-    // Isolate and encode structural URI segments to block out injection components
     const safeUsername = encodeURIComponent(username);
     const safeRepo = encodeURIComponent(repoName);
     
     let url = `https://api.github.com/repos/${safeUsername}/${safeRepo}`;
     
     if (directoryPath) {
-        // Map and encode down individual subdirectory segments to preserve pathing architecture safely
+
         const safeSegments = directoryPath
             .split('/')
             .map(segment => encodeURIComponent(segment))
@@ -104,7 +98,6 @@ async function verifyRemotePath(repoName, directoryPath = '') {
     }
 }
 
-// Generates correct relative path strings required by GitHub operations
 export function getFullFilePath(filename) {
     if (currentPath.length > 0) {
         return currentPath.join('/') + '/' + filename;
@@ -123,7 +116,6 @@ if (themeToggle) {
     });
 }
 
-// Global hotkey capture sequence to safely back out of any active tool context
 window.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key.toLowerCase() === 'e') {
         e.preventDefault();
@@ -147,7 +139,6 @@ if (cmdInput) {
         cmdInput.style.height = cmdInput.scrollHeight + 'px';
     });
 
-    // Dynamic pasting interface routed straight to active sub-tool engines
     cmdInput.addEventListener('paste', async (e) => {
         if (currentMode !== 'main') {
             if (registry[currentMode] && typeof registry[currentMode].handleInput === 'function') {
@@ -161,7 +152,7 @@ if (cmdInput) {
     });
 
     cmdInput.addEventListener('keydown', async (e) => {
-        // Dynamic backspace intercepts delegated directly to active tool context logic
+
         if (e.key === 'Backspace' && cmdInput.selectionStart === 0 && cmdInput.selectionEnd === 0) {
             if (currentMode !== "main") {
                 if (registry[currentMode] && typeof registry[currentMode].backspaceUp === 'function') {
@@ -189,7 +180,6 @@ if (cmdInput) {
             
             if (rawInput.trim() === '' && currentMode === "main") return;
 
-            // --- MODE: Active Subsystem Tool Routing Delegation ---
             if (currentMode !== "main") {
                 if (registry[currentMode] && typeof registry[currentMode].handleInput === 'function') {
                     await registry[currentMode].handleInput(rawInput);
@@ -197,7 +187,7 @@ if (cmdInput) {
                 }
             }
 
-            // --- INTERCEPT LOOP: Interactive Target Deletion Challenge Response ---
+
             if (pendingDeleteTarget) {
                 print(`> ${rawInput}`);
                 
@@ -217,7 +207,6 @@ if (cmdInput) {
                         print(`system: removing local workspace content memory traces for file: '${pendingDeleteTarget}'...`);
                         delete fileBuffers[pendingDeleteTarget];
 
-                        // Synchronize file teardown with remote GitHub repository API
                         if (registry['github'] && typeof registry['github'].delete === 'function') {
                             const fullPath = getFullFilePath(pendingDeleteTarget);
                             print(`system: streaming teardown verification request to remote GitHub repository...`);
@@ -233,7 +222,6 @@ if (cmdInput) {
                         const fullDir = getFullFilePath(pendingDeleteTarget);
                         virtualDirectories.delete(fullDir);
                         
-                        // Synchronize directory node branch recursive cleanup with remote GitHub repository API
                         if (registry['github'] && typeof registry['github'].delete === 'function') {
                             print(`system: streaming recursive teardown request to remote GitHub repository...`);
                             const remoteSuccess = await registry['github'].delete(fullDir);
@@ -264,14 +252,12 @@ if (cmdInput) {
                 return;
             }
 
-            // --- MODE: Standard Virtual Shell Navigation Parsing ---
             const commandLogPrompt = getSystemPrompt();
             print(`${commandLogPrompt}${rawInput}`);
             
             const cleanCommand = rawInput.trim();
             const lowerCommand = cleanCommand.toLowerCase();
 
-            // 1. Dynamic Absolute System Escape Jump Framework
             const currentUsername = (localStorage.getItem('github_username') || 'guest').toLowerCase();
             if (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`) {
                 localStorage.removeItem('repository');
@@ -280,7 +266,6 @@ if (cmdInput) {
                 return;
             }
 
-            // 2. Direct Raw Relative Navigation Execution (e.g. `../`, `../../`, `..`)
             if (lowerCommand === '..' || lowerCommand.startsWith('../') || lowerCommand.endsWith('/..')) {
                 const steps = cleanCommand.split('/');
                 steps.forEach(step => {
@@ -296,7 +281,6 @@ if (cmdInput) {
                 return;
             }
 
-            // 3. Intercept and cleanly evaluate standard space 'cd' relocation logic
             if (lowerCommand.startsWith('cd ') || lowerCommand === 'cd' || lowerCommand.startsWith('cd/')) {
                 let pathTarget = '';
                 if (lowerCommand.startsWith('cd ')) {
@@ -307,7 +291,6 @@ if (cmdInput) {
 
                 if (!pathTarget) return;
 
-                // Relative backward loops processing inside cd
                 if (pathTarget.startsWith('..')) {
                     const steps = pathTarget.split('/');
                     steps.forEach(step => {
@@ -323,17 +306,15 @@ if (cmdInput) {
                     return;
                 }
 
-                // File validation check if targeted inside cd
                 if (pathTarget.includes('.')) {
                     print(`system: executing read-only preview pull for: ${pathTarget}`);
-                    // Check local memory buffer map first
+
                     if (fileBuffers[pathTarget]) {
                         print("--------------------------------------------------");
                         print(fileBuffers[pathTarget].join('\n'));
                         print("--------------------------------------------------");
                         return;
                     }
-                    // Fall back to GitHub API pull sequence
                     if (registry['github'] && typeof registry['github'].pull === 'function') {
                         const fullPath = getFullFilePath(pathTarget);
                         const data = await registry['github'].pull(fullPath);
@@ -350,7 +331,6 @@ if (cmdInput) {
                     return;
                 }
 
-                // Subdirectory push routing logic with strict verification pings
                 const activeRepo = localStorage.getItem('repository');
                 if (!activeRepo) {
                     print(`system: scanning GitHub for repository configuration: '${pathTarget}'...`);
@@ -375,11 +355,9 @@ if (cmdInput) {
                 return;
             }
 
-            // For explicit slash sub-actions, isolate parameters cleanly
             const firstSegment = lowerCommand.split('/')[0];
             const targetPayload = cleanCommand.split('/').slice(1).join('/');
 
-            // Explicit target command: create/name
             if (firstSegment === 'create') {
                 if (!targetPayload) {
                     print("error: specify valid initialization target definitions. e.g. create/app.js or create/repo-name");
@@ -395,7 +373,6 @@ if (cmdInput) {
                     return;
                 }
 
-                // CASE 1: No active repository context -> Create an actual live repository on GitHub
                 if (!activeRepo) {
                     print(`system: compiling remote initialization sequence for new GitHub repository: '${targetPayload}'...`);
                     try {
@@ -426,7 +403,6 @@ if (cmdInput) {
                         print(`error: network communication with github api failed: ${e.message}`);
                     }
                 } 
-                // CASE 2: Inside a repository context -> Create an actual file or directory on GitHub
                 else {
                     if (registry['github'] && typeof registry['github'].sync === 'function') {
                         const isFile = targetPayload.includes('.');
@@ -434,7 +410,6 @@ if (cmdInput) {
                         let content = "";
                         
                         if (isFile) {
-                            // Extract file extension and cross-examine validation matrix
                             const fileSegments = targetPayload.split('.');
                             const extension = fileSegments[fileSegments.length - 1].toLowerCase();
                             
@@ -445,12 +420,11 @@ if (cmdInput) {
                             }
 
                             print(`system: provisioning new isolated plaintext resource on GitHub: [${fullPath}]...`);
-                            fileBuffers[targetPayload] = [""]; // Allocate to local tracking maps
-                            content = "\n"; // Clean, empty initial payload line
+                            fileBuffers[targetPayload] = [""];
+                            content = "\n";
                         } else {
                             print(`system: constructing directory layout node mapping on GitHub via .gitkeep: [${fullPath}]...`);
-                            virtualDirectories.add(fullPath); // Save locally to tracking map
-                            // Git cannot track empty folders; append a .gitkeep file to build it remotely
+                            virtualDirectories.add(fullPath);
                             fullPath = fullPath + '/.gitkeep';
                             content = "# Placeholder for virtual directory tracking\n";
                         }
@@ -469,7 +443,6 @@ if (cmdInput) {
                 return;
             }
 
-            // Explicit target command: delete/name
             if (firstSegment === 'delete') {
                 if (!targetPayload) {
                     print("error: specify valid target resource configurations to delete, e.g. delete/index.html");
@@ -487,12 +460,10 @@ if (cmdInput) {
                 }
                 pendingDeleteTarget = targetPayload;
                 print(`Are you sure you want to delete the ${pendingDeleteType} '${targetPayload}', [Yes/no]?`);
-                setMode("main", "> "); // Re-align prompt view for interactive loop captures
+                setMode("main", "> ");
                 return;
             }
 
-            // Explicit target command: edit/filename OR editor/filename
-            // FIXED: Added check for slash presence so typing just 'editor' doesn't get blocked here
             if ((firstSegment === 'edit' || firstSegment === 'editor') && cleanCommand.includes('/')) {
                 if (!targetPayload) {
                     print("error: specify path name parameter, e.g. edit/note.txt");
@@ -511,7 +482,6 @@ if (cmdInput) {
                 return;
             }
 
-            // Explicit target command: pull/filename
             if (firstSegment === 'pull') {
                 if (!targetPayload) {
                     print("error: specify path name parameter, e.g. pull/index.html");
@@ -532,8 +502,6 @@ if (cmdInput) {
                 }
                 return;
             }
-
-            // Explicit target command: save/filename
             if (firstSegment === 'save') {
                 if (!targetPayload) {
                     print("error: specify target save path parameters, e.g. save/index.html");
@@ -559,7 +527,6 @@ if (cmdInput) {
                 return;
             }
 
-            // Explicit target command: run/filename
             if (firstSegment === 'run') {
                 if (!targetPayload) {
                     print("error: specify run target parameters, e.g. run/note.txt");
@@ -625,7 +592,6 @@ if (cmdInput) {
                 return;
             }
 
-            // Global System Core Interfaces Routing Block
             if (lowerCommand === 'help') {
                 const activeUsername = localStorage.getItem('github_username') || 'guest';
                 const dynamicUserCmd = `  ${activeUsername}/`.padEnd(29);
@@ -653,7 +619,6 @@ if (cmdInput) {
             } else if (lowerCommand === 'hello') {
                 print('hello, this is darshseraphic, nice to meet you!');
             } else if (registry[firstSegment]) {
-                // INTERCEPT: If weather is called directly with a slash inline, pass it directly without setting the mode
                 if (firstSegment === 'weather' && cleanCommand.includes('/')) {
                     await registry[firstSegment].handleInput(cleanCommand);
                     return;
@@ -664,7 +629,6 @@ if (cmdInput) {
                     await registry[firstSegment].onEnter();
                 }
                 if (cleanCommand.includes('/')) {
-                    // FIXED: Passed targetPayload instead of cleanCommand so that the tool does not get the prefix name forwarded
                     await registry[firstSegment].handleInput(targetPayload);
                 }
             } else {
