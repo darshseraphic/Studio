@@ -325,7 +325,6 @@ const calculator = {
             return;
         }
 
-        // Specialized Numerical Calculus Matrix Routing
         if (cleanInput.toLowerCase().startsWith('diff(')) {
             const match = cleanInput.match(/^diff\((.+),\s*(.+)\)$/i);
             if (!match) {

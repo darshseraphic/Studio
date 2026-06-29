@@ -171,7 +171,6 @@ export async function pullFileFromGitHub(filePath) {
     }
 }
 
-// Universal remote object teardown stream for deleting files and subdirectories on GitHub
 export async function deletePathFromGitHub(filePath) {
     const rawToken = localStorage.getItem('user');
     const rawUsername = localStorage.getItem('github_username');
@@ -196,23 +195,20 @@ export async function deletePathFromGitHub(filePath) {
         });
 
         if (!res.ok) {
-            if (res.status === 404) return true; // File or folder doesn't exist on remote, treat as success
+            if (res.status === 404) return true;
             return false;
         }
 
         const data = await res.json();
 
-        // Branch Handler 1: Target path points to a directory structure array
         if (Array.isArray(data)) {
             let overallSuccess = true;
             for (const node of data) {
-                // Recursively delete all items discovered inside this directory node
                 const success = await deletePathFromGitHub(node.path);
                 if (!success) overallSuccess = false;
             }
             return overallSuccess;
         } 
-        // Branch Handler 2: Target path points to an individual file instance
         else if (data && typeof data.sha === 'string') {
             const deleteRes = await fetch(apiPath, {
                 method: 'DELETE',
@@ -241,7 +237,7 @@ const githubTool = {
     sync: pushFileToGitHub,
     pull: pullFileFromGitHub,
     tree: fetchRepoTree,
-    delete: deletePathFromGitHub, // Registered delete integration
+    delete: deletePathFromGitHub,
     
     onEnter: async () => {
         print("system: github configuration subsystem activated.");
