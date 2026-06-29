@@ -104,7 +104,7 @@ export async function pushFileToGitHub(filePath, content) {
 
         const actionType = sha ? 'Update' : 'Create';
         const payload = {
-            message: `${actionType} environment workspace tracking resource: ${sanitizeInputString(filePath)}`,
+            message: `${actionType} Initial commit: ${sanitizeInputString(filePath)}`,
             content: base64Content
         };
 
