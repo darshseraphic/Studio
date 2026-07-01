@@ -1,3 +1,5 @@
+import { networkTool } from './network.js';
+
 const outputDiv = document.getElementById('output');
 const cmdInput = document.getElementById('cmd-input');
 const themeToggle = document.getElementById('theme-toggle');
@@ -9,7 +11,6 @@ const VALID_EXTENSIONS = [
 ];
 
 export let currentMode = "main"; 
-// PERSISTENCE FIX: Load saved directory path context from localStorage on page refresh
 export let currentPath = JSON.parse(localStorage.getItem('current_path') || '[]');
 export let fileBuffers = {};
 export let virtualDirectories = new Set();
@@ -18,9 +19,9 @@ let pendingDeleteTarget = "";
 let pendingDeleteType = "";
 
 export const registry = {};
+registry['network'] = networkTool;
 const usedToolsInSession = new Set();
 
-// Helper to keep localStorage synced up with path array adjustments
 function savePathState() {
     if (localStorage.getItem('repository')) {
         localStorage.setItem('current_path', JSON.stringify(currentPath));
@@ -55,6 +56,8 @@ export function print(text) {
     return line;
 }
 
+window.print = print;
+
 export function registerTool(name, toolModule) {
     registry[name] = toolModule;
 }
@@ -67,7 +70,6 @@ export function setMode(modeName, promptText = "") {
 }
 
 async function verifyRemotePath(repoName, directoryPath = '') {
-
     if (directoryPath && virtualDirectories.has(directoryPath)) {
         return true;
     }
@@ -86,7 +88,6 @@ async function verifyRemotePath(repoName, directoryPath = '') {
     let url = `https://api.github.com/repos/${safeUsername}/${safeRepo}`;
     
     if (directoryPath) {
-
         const safeSegments = directoryPath
             .split('/')
             .map(segment => encodeURIComponent(segment))
@@ -162,7 +163,6 @@ if (cmdInput) {
     });
 
     cmdInput.addEventListener('keydown', async (e) => {
-
         if (e.key === 'Backspace' && cmdInput.selectionStart === 0 && cmdInput.selectionEnd === 0) {
             if (currentMode !== "main") {
                 if (registry[currentMode] && typeof registry[currentMode].backspaceUp === 'function') {
@@ -196,7 +196,6 @@ if (cmdInput) {
                     return;
                 }
             }
-
 
             if (pendingDeleteTarget) {
                 print(`> ${rawInput}`);
@@ -369,6 +368,26 @@ if (cmdInput) {
                         print(`error: directory structural node components '${pathTarget}' do not exist.`);
                     }
                 }
+                return;
+            }
+
+            if (lowerCommand.startsWith('open ') || lowerCommand === 'open' || lowerCommand.startsWith('open/')) {
+                let urlTarget = '';
+                if (cleanCommand.startsWith('open ')) {
+                    urlTarget = cleanCommand.substring(5).trim();
+                } else if (cleanCommand.startsWith('open/')) {
+                    urlTarget = cleanCommand.substring(5).trim();
+                }
+
+                if (!urlTarget) {
+                    print("error: specify a valid URL to open.");
+                    return;
+                }
+                let url = urlTarget;
+                if (!/^https?:\/\//i.test(url)) {
+                    url = 'https://' + url;
+                }
+                window.open(url, '_blank', 'noopener,noreferrer');
                 return;
             }
 
@@ -771,6 +790,9 @@ if (cmdInput) {
                 print("  edit/[file_name]           - open targeted items inside the workspace text editor");
                 print("  calculator                 - trigger calculation environment variables");
                 print("  weather/[location]         - query weather database forecasting reports");
+                print("  network/ip                 - show ip address");
+                print("  network/location           - show ip location");
+                print("  network/speed              - show network speed live");
                 print("  cd [dir_name]              - descend into a sub-directory node array");
                 print("  cd [file_name]             - pull and perform immediate read-only preview console blocks");
                 print("  cd .. (or ../../)          - perform relative tracking stack reversals");
@@ -781,6 +803,7 @@ if (cmdInput) {
                 print("  pull/[file_name]           - restore structural content configurations from cloud nodes");
                 print("  save/[file_name]           - serialize buffer arrays and execute remote pushes to cloud git");
                 print("  run/[file_name]            - compile and render document nodes to sub-sandbox tabs cleanly");
+                print("  open [url] (or open/[url]) - open target URL link inside a new browser tab cleanly");
                 print("  fletch                     - list all file nodes and directories at root level");
                 print("  fletch/[directory_name]    - parse file extensions and nested nodes inside a subdirectory");
                 print("  fletch/[file_name.exten]   - display full layout code contents of a file node instantly");
@@ -789,14 +812,13 @@ if (cmdInput) {
             } else if (lowerCommand === 'clear') {
                 if (outputDiv) outputDiv.textContent = '';
             } else if (lowerCommand === 'refresh') {
-                // REFRESH COMMAND IMPLEMENTATION
                 print("system: rebooting environment console pipeline sync arrays...");
                 window.location.reload();
                 return;
             } else if (lowerCommand === 'hello') {
                 print('hello, this is darshseraphic, nice to meet you!');
             } else if (registry[firstSegment]) {
-                if (firstSegment === 'weather' && cleanCommand.includes('/')) {
+                if ((firstSegment === 'weather' || firstSegment === 'network') && cleanCommand.includes('/')) {
                     await registry[firstSegment].handleInput(cleanCommand);
                     return;
                 }

@@ -104,7 +104,7 @@ export async function pushFileToGitHub(filePath, content) {
 
         const actionType = sha ? 'Update' : 'Create';
         const payload = {
-            message: `${actionType} Initial commit: ${sanitizeInputString(filePath)}`,
+            message: `Initial Commit`,
             content: base64Content
         };
 
@@ -218,7 +218,7 @@ export async function deletePathFromGitHub(filePath) {
                     'Accept': 'application/vnd.github+json'
                 },
                 body: JSON.stringify({
-                    message: `Purge workspace resource node: ${sanitizeInputString(filePath)}`,
+                    message: `Initial Commit`,
                     sha: data.sha
                 })
             });
