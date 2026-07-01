@@ -240,56 +240,138 @@ export async function renameDirectoryInGitHub(oldDir, newDir) {
     if (!SAFE_FILE_NAME_REGEX.test(oldDir) || oldDir.includes('..')) return false;
     if (!SAFE_FILE_NAME_REGEX.test(newDir) || newDir.includes('..')) return false;
 
-    async function collectAllFiles(dirPath) {
-        let files = [];
-        const items = await fetchRepoTree(rawRepo, dirPath);
-        for (const item of items) {
-            if (item.type === 'file') {
-                files.push(item.path);
-            } else if (item.type === 'dir') {
-                const subFiles = await collectAllFiles(item.path);
-                files = files.concat(subFiles);
-            }
-        }
-        return files;
-    }
+    const username = encodeURIComponent(rawUsername);
+    const repo = encodeURIComponent(rawRepo);
+    const commonHeaders = {
+        'Authorization': `Bearer ${rawToken}`,
+        'Accept': 'application/vnd.github+json'
+    };
 
     try {
-        print(`system: indexing remote file matrix tree components under [${oldDir}]...`);
-        const targetFiles = await collectAllFiles(oldDir);
+        print(`system: connecting to git transaction engine for single-commit atomic shift...`);
+        
+        // 1. Find the default repository branch targeting index (main vs master context mapping)
+        const repoInfoRes = await fetch(`https://api.github.com/repos/${username}/${repo}`, { headers: commonHeaders });
+        if (!repoInfoRes.ok) {
+            print(`error: failed to retrieve repository details. status: ${repoInfoRes.status}`);
+            return false;
+        }
+        const repoInfo = await repoInfoRes.json();
+        const defaultBranch = repoInfo.default_branch || 'main';
 
-        if (targetFiles.length === 0) {
-            print("warning: no remote tracking files discovered within target directory path configuration.");
+        // 2. Query active head reference pointer signature
+        print(`system: reading head reference for branch [${defaultBranch}]...`);
+        const refRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/ref/heads/${defaultBranch}`, { headers: commonHeaders });
+        if (!refRes.ok) {
+            print(`error: failed to read head branch reference layout mapping.`);
+            return false;
+        }
+        const refData = await refRes.json();
+        const parentCommitSha = refData.object.sha;
+
+        // 3. Download full repository recursive tree index composition
+        print(`system: loading repository object relationship graph map matrix...`);
+        const treeRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/trees/${parentCommitSha}?recursive=true`, { headers: commonHeaders });
+        if (!treeRes.ok) {
+            print(`error: failed to safely crawl repository git object tree layout entries.`);
+            return false;
+        }
+        const treeData = await treeRes.json();
+        
+        // 4. Transform folder tree path keys mapping array structures inside local layout memory
+        const cleanOldDir = oldDir.endsWith('/') ? oldDir : oldDir + '/';
+        const cleanNewDir = newDir.endsWith('/') ? newDir : newDir + '/';
+        let newTreeEntries = [];
+        let filesMovedCount = 0;
+
+        for (const item of treeData.tree) {
+            // Low-level Git trees automatically generate subfolders dynamically from file path configurations
+            if (item.type !== 'blob') continue;
+
+            if (item.path.startsWith(cleanOldDir)) {
+                const relativePath = item.path.substring(cleanOldDir.length);
+                newTreeEntries.push({
+                    path: cleanNewDir + relativePath,
+                    mode: item.mode,
+                    type: item.type,
+                    sha: item.sha // Point directly to the existing content SHA—no downloads or data changes needed
+                });
+                filesMovedCount++;
+            } else if (item.path === oldDir) {
+                newTreeEntries.push({
+                    path: newDir,
+                    mode: item.mode,
+                    type: item.type,
+                    sha: item.sha
+                });
+                filesMovedCount++;
+            } else {
+                // Keep everything else completely unmodified
+                newTreeEntries.push({
+                    path: item.path,
+                    mode: item.mode,
+                    type: item.type,
+                    sha: item.sha
+                });
+            }
+        }
+
+        if (filesMovedCount === 0) {
+            print(`warning: no active structural files discovered within directory path configuration [${oldDir}].`);
             return false;
         }
 
-        print(`system: found ${targetFiles.length} file node(s). Initializing transactional cloud migration copies...`);
+        print(`system: staged ${filesMovedCount} file node(s) for reallocation. compiling atomic tree...`);
 
-        for (const oldFilePath of targetFiles) {
-            const relativePathSegment = oldFilePath.substring(oldDir.length);
-            const newFilePath = newDir + relativePathSegment;
+        // 5. Post the absolute replacement tree object representation matrix
+        const createTreeRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/trees`, {
+            method: 'POST',
+            headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tree: newTreeEntries })
+        });
+        if (!createTreeRes.ok) {
+            print(`error: github rejected structural tree payload build compilation array format.`);
+            return false;
+        }
+        const newTreeData = await createTreeRes.json();
+        const newTreeSha = newTreeData.sha;
 
-            print(`system: moving file data frame [${oldFilePath}] -> [${newFilePath}]...`);
+        // 6. Build the combined individual commit pointing to the compiled tree framework
+        print(`system: packing transaction payload into single atomic commit manifest...`);
+        const createCommitRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/commits`, {
+            method: 'POST',
+            headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: `Rename directory '${oldDir}' to '${newDir}'`,
+                tree: newTreeSha,
+                parents: [parentCommitSha]
+            })
+        });
+        if (!createCommitRes.ok) {
+            print(`error: transaction commit verification generation failed under cloud processing.`);
+            return false;
+        }
+        const newCommitData = await createCommitRes.json();
+        const newCommitSha = newCommitData.sha;
 
-            const fileContent = await pullFileFromGitHub(oldFilePath);
-            if (fileContent === null) {
-                print(`error: migration transaction broken. failed to parse initialization parameters of: ${oldFilePath}`);
-                return false;
-            }
+        // 7. Pivot head reference pointer array target to look safely at our new commit node
+        print(`system: pushing commit block to head reference array...`);
+        const updateRefRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/refs/heads/${defaultBranch}`, {
+            method: 'PATCH',
+            headers: { ...commonHeaders, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sha: newCommitSha, force: false })
+        });
 
-            const writeSuccess = await pushFileToGitHub(newFilePath, fileContent);
-            if (!writeSuccess) {
-                print(`error: destination node allocation failure on write stream target: ${newFilePath}`);
-                return false;
-            }
+        if (updateRefRes.ok) {
+            print(`system: transaction complete! folder shifted cleanly via 1 consolidated atomic commit.`);
+            return true;
+        } else {
+            print(`error: head reference pointing pipeline shift execution blocked or rejected.`);
+            return false;
         }
 
-        print(`system: sync operations finalized. dispatching structural teardown request to old node paths...`);
-        const wipeOldTreeSuccess = await deletePathFromGitHub(oldDir);
-        
-        return wipeOldTreeSuccess;
     } catch (e) {
-        print(`error: unexpected transmission pipeline failure during directory transformation sequence: ${e.message}`);
+        print(`error: transaction execution tracking pipeline failed unexpectedly: ${e.message}`);
         return false;
     }
 }
