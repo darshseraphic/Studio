@@ -102,7 +102,6 @@ export async function pushFileToGitHub(filePath, content) {
             }
         }
 
-        const actionType = sha ? 'Update' : 'Create';
         const payload = {
             message: `Initial Commit`,
             content: base64Content
@@ -232,7 +231,7 @@ export async function deletePathFromGitHub(filePath) {
 }
 
 const githubTool = {
-    helpText: "configure terminal verification credentials. subcommands: login/token, repo/name, confirm, logout",
+    helpText: "configure terminal verification credentials. subcommands: help, status, login/token, repo/name, confirm, logout",
     prompt: "github>",
     sync: pushFileToGitHub,
     pull: pullFileFromGitHub,
@@ -267,6 +266,29 @@ const githubTool = {
         const parts = cleanInput.split('/');
         const action = parts[0].trim().toLowerCase();
         const value = parts.slice(1).join('/').trim();
+
+        if (action === 'help') {
+            print(githubTool.helpText);
+            return;
+        }
+
+        if (action === 'status') {
+            const token = localStorage.getItem('user');
+            const username = localStorage.getItem('github_username');
+            const repo = localStorage.getItem('repository');
+
+            if (token && username) {
+                print(`status: verified authorization stream caching as @${sanitizeInputString(username)}`);
+                if (repo) {
+                    print(`active structural tracking repo context: ${sanitizeInputString(repo)}`);
+                } else {
+                    print("active workspace repo: none contextually bound (use root traversal or 'repo/name')");
+                }
+            } else {
+                print("status: unauthenticated. authorize workspace by generating a personal access token and entering: login/token");
+            }
+            return;
+        }
 
         if (action === 'login') {
             if (!value) {
@@ -413,7 +435,7 @@ const githubTool = {
             return;
         }
 
-        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, logout");
+        print("error: unhandled sub-command. available options: help, status, login/token, repo/name, confirm, logout");
     },
     onExit: () => {
         print("system: exited github config mode.");

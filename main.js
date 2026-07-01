@@ -18,6 +18,10 @@ export let virtualDirectories = new Set();
 let pendingDeleteTarget = "";
 let pendingDeleteType = "";
 
+// Multi-step Interactive State Tracking for Rename operations
+let pendingRenameTarget = "";
+let pendingRenameType = "";
+
 export const registry = {};
 registry['network'] = networkTool;
 const usedToolsInSession = new Set();
@@ -197,6 +201,7 @@ if (cmdInput) {
                 }
             }
 
+            // --- DELETION INTERACTIVE STATE MACHINE ---
             if (pendingDeleteTarget) {
                 print(`> ${rawInput}`);
                 
@@ -260,6 +265,140 @@ if (cmdInput) {
                 } else {
                     print(`Are you sure you want to delete the ${pendingDeleteType} '${pendingDeleteTarget}', [Yes/no]?`);
                 }
+                return;
+            }
+
+            // --- RENAME INTERACTIVE STATE MACHINE ---
+            if (pendingRenameTarget) {
+                print(`> ${rawInput}`);
+                const newName = rawInput.trim();
+
+                if (!newName) {
+                    print(`error: new name configuration cannot be blank. Enter new name for ${pendingRenameType} '${pendingRenameTarget}':`);
+                    return;
+                }
+
+                if (pendingRenameType === 'repository') {
+                    print(`system: streaming structural administrative PATCH updates to GitHub repository: '${pendingRenameTarget}'...`);
+                    const token = localStorage.getItem('user');
+                    const username = localStorage.getItem('github_username');
+
+                    if (!token || !username) {
+                        print("error: active github auth credentials not resolved. process aborted.");
+                    } else {
+                        try {
+                            const patchRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(pendingRenameTarget)}`, {
+                                method: 'PATCH',
+                                headers: {
+                                    'Authorization': `Bearer ${token}`,
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/vnd.github+json'
+                                },
+                                body: JSON.stringify({ name: newName })
+                            });
+
+                            if (patchRes.ok) {
+                                print(`system: repository successfully rewritten to '${newName}' in cloud configurations.`);
+                                localStorage.setItem('repository', newName);
+                                savePathState();
+                            } else {
+                                const errData = await patchRes.json().catch(() => ({}));
+                                print(`error: failed to rewrite repository frame. GitHub status ${patchRes.status}: ${errData.message || 'Unknown administrative constraint'}`);
+                            }
+                        } catch (e) {
+                            print(`error: unexpected transmission pipeline failure: ${e.message}`);
+                        }
+                    }
+                } 
+                else if (pendingRenameType === 'file') {
+                    const fileSegments = newName.split('.');
+                    const extension = fileSegments[fileSegments.length - 1].toLowerCase();
+
+                    if (!newName.includes('.') || !VALID_EXTENSIONS.includes(extension)) {
+                        print(`error: layout configuration rejected. extension '.${extension}' breaks systemic syntax rule maps.`);
+                        print(`accepted matrix models: ${VALID_EXTENSIONS.join(', ')}`);
+                    } else {
+                        const oldFullPath = getFullFilePath(pendingRenameTarget);
+                        const newFullPath = getFullFilePath(newName);
+
+                        print(`system: configuring file tracking shift from [${oldFullPath}] to [${newFullPath}]...`);
+
+                        // If your github tool has a direct atomic rename handler, call it; otherwise execute safe transaction fallback sequences
+                        if (registry['github'] && typeof registry['github'].renameFile === 'function') {
+                            const success = await registry['github'].renameFile(oldFullPath, newFullPath);
+                            if (success) {
+                                if (fileBuffers[pendingRenameTarget]) {
+                                    fileBuffers[newName] = fileBuffers[pendingRenameTarget];
+                                    delete fileBuffers[pendingRenameTarget];
+                                }
+                                print(`system: remote cloud resource rename transaction finalized.`);
+                            } else {
+                                print(`error: file shift sequence denied by remote pipeline logic.`);
+                            }
+                        } else if (registry['github'] && typeof registry['github'].sync === 'function' && typeof registry['github'].delete === 'function' && typeof registry['github'].pull === 'function') {
+                            // High compatibility fallback: copy-contents-forward then release-old-node
+                            let activeContent = fileBuffers[pendingRenameTarget] ? fileBuffers[pendingRenameTarget].join('\n') : null;
+                            if (activeContent === null) {
+                                activeContent = await registry['github'].pull(oldFullPath);
+                            }
+
+                            if (activeContent !== null) {
+                                print(`system: initializing atomic shift data frame copy...`);
+                                const copyCreated = await registry['github'].sync(newFullPath, activeContent);
+                                if (copyCreated) {
+                                    print(`system: copy finalized. issuing teardown instruction on old node trace...`);
+                                    const oldPurged = await registry['github'].delete(oldFullPath);
+                                    if (oldPurged) {
+                                        if (fileBuffers[pendingRenameTarget]) {
+                                            fileBuffers[newName] = fileBuffers[pendingRenameTarget];
+                                            delete fileBuffers[pendingRenameTarget];
+                                        }
+                                        print(`system: cloud repository resource file rename process completed successfully.`);
+                                    } else {
+                                        print(`warning: copy mapped to destination, but local/remote pipeline failed to release the old resource footprint safely.`);
+                                    }
+                                } else {
+                                    print(`error: target destination write failure. execution canceled.`);
+                                }
+                            } else {
+                                print(`error: cannot parse or read the initialization source parameters of '${pendingRenameTarget}'.`);
+                            }
+                        } else {
+                            print("warning: standard git synchronization pipelines are offline.");
+                        }
+                    }
+                } 
+                else if (pendingRenameType === 'directory') {
+                    const oldFullDir = getFullFilePath(pendingRenameTarget);
+                    const newFullDir = getFullFilePath(newName);
+                    
+                    print(`system: updating local structural node layout tags from [${oldFullDir}] to [${newFullDir}]...`);
+                    if (virtualDirectories.has(oldFullDir)) {
+                        virtualDirectories.delete(oldFullDir);
+                        virtualDirectories.add(newFullDir);
+                    }
+
+                    if (registry['github'] && typeof registry['github'].renameDirectory === 'function') {
+                        const remoteSuccess = await registry['github'].renameDirectory(oldFullDir, newFullDir);
+                        if (remoteSuccess) {
+                            print(`system: cloud directory path mappings rewritten successfully.`);
+                        } else {
+                            print(`error: remote tree modification failed or access was unverified.`);
+                        }
+                    } else {
+                        print(`system: local tree index adjusted. Note: GitHub REST specifications treat directories as virtual paths; files within this container require individual pushes.`);
+                    }
+
+                    const pathIndex = currentPath.findIndex(p => p.toLowerCase() === pendingRenameTarget.toLowerCase());
+                    if (pathIndex !== -1) {
+                        currentPath[pathIndex] = newName;
+                        savePathState();
+                    }
+                }
+
+                pendingRenameTarget = "";
+                pendingRenameType = "";
+                setMode("main", getSystemPrompt());
                 return;
             }
 
@@ -568,6 +707,28 @@ if (cmdInput) {
                 return;
             }
 
+            // --- RENAME INITIALIZATION ROUTER ---
+            if (firstSegment === 'rename') {
+                if (!targetPayload) {
+                    print("error: specify a valid target resource to rename, e.g. rename/index.html or rename/old-repo-name");
+                    return;
+                }
+                const activeRepo = localStorage.getItem('repository');
+                if (!activeRepo) {
+                    pendingRenameType = "repository";
+                } else {
+                    if (targetPayload.includes('.')) {
+                        pendingRenameType = "file";
+                    } else {
+                        pendingRenameType = "directory";
+                    }
+                }
+                pendingRenameTarget = targetPayload;
+                print(`Enter new name for the ${pendingRenameType} '${targetPayload}':`);
+                setMode("main", "> ");
+                return;
+            }
+
             if ((firstSegment === 'edit' || firstSegment === 'editor') && cleanCommand.includes('/')) {
                 if (!targetPayload) {
                     print("error: specify path name parameter, e.g. edit/note.txt");
@@ -800,6 +961,7 @@ if (cmdInput) {
                 print(`${dynamicUserCmd}- direct workspace layout structural reset jump to root prompt`);
                 print("  create/[target]            - allocate new repositories, sub-directories, or code files");
                 print("  delete/[target]            - clear architectural nodes or elements with interactive safeguards");
+                print("  rename/[target]            - change resource titles or repository labels interactively");
                 print("  pull/[file_name]           - restore structural content configurations from cloud nodes");
                 print("  save/[file_name]           - serialize buffer arrays and execute remote pushes to cloud git");
                 print("  run/[file_name]            - compile and render document nodes to sub-sandbox tabs cleanly");
