@@ -230,6 +230,70 @@ export async function deletePathFromGitHub(filePath) {
     }
 }
 
+export async function renameDirectoryInGitHub(oldDir, newDir) {
+    const rawToken = localStorage.getItem('user');
+    const rawUsername = localStorage.getItem('github_username');
+    const rawRepo = localStorage.getItem('repository');
+
+    if (!rawToken || !rawUsername || !rawRepo) return false;
+    if (!AUTH_TOKEN_REGEX.test(rawToken) || !REPO_NAME_REGEX.test(rawRepo)) return false;
+    if (!SAFE_FILE_NAME_REGEX.test(oldDir) || oldDir.includes('..')) return false;
+    if (!SAFE_FILE_NAME_REGEX.test(newDir) || newDir.includes('..')) return false;
+
+    async function collectAllFiles(dirPath) {
+        let files = [];
+        const items = await fetchRepoTree(rawRepo, dirPath);
+        for (const item of items) {
+            if (item.type === 'file') {
+                files.push(item.path);
+            } else if (item.type === 'dir') {
+                const subFiles = await collectAllFiles(item.path);
+                files = files.concat(subFiles);
+            }
+        }
+        return files;
+    }
+
+    try {
+        print(`system: indexing remote file matrix tree components under [${oldDir}]...`);
+        const targetFiles = await collectAllFiles(oldDir);
+
+        if (targetFiles.length === 0) {
+            print("warning: no remote tracking files discovered within target directory path configuration.");
+            return false;
+        }
+
+        print(`system: found ${targetFiles.length} file node(s). Initializing transactional cloud migration copies...`);
+
+        for (const oldFilePath of targetFiles) {
+            const relativePathSegment = oldFilePath.substring(oldDir.length);
+            const newFilePath = newDir + relativePathSegment;
+
+            print(`system: moving file data frame [${oldFilePath}] -> [${newFilePath}]...`);
+
+            const fileContent = await pullFileFromGitHub(oldFilePath);
+            if (fileContent === null) {
+                print(`error: migration transaction broken. failed to parse initialization parameters of: ${oldFilePath}`);
+                return false;
+            }
+
+            const writeSuccess = await pushFileToGitHub(newFilePath, fileContent);
+            if (!writeSuccess) {
+                print(`error: destination node allocation failure on write stream target: ${newFilePath}`);
+                return false;
+            }
+        }
+
+        print(`system: sync operations finalized. dispatching structural teardown request to old node paths...`);
+        const wipeOldTreeSuccess = await deletePathFromGitHub(oldDir);
+        
+        return wipeOldTreeSuccess;
+    } catch (e) {
+        print(`error: unexpected transmission pipeline failure during directory transformation sequence: ${e.message}`);
+        return false;
+    }
+}
+
 const githubTool = {
     helpText: "configure terminal verification credentials. subcommands: help, status, login/token, repo/name, confirm, logout",
     prompt: "github>",
@@ -237,6 +301,7 @@ const githubTool = {
     pull: pullFileFromGitHub,
     tree: fetchRepoTree,
     delete: deletePathFromGitHub,
+    renameDirectory: renameDirectoryInGitHub,
     
     onEnter: async () => {
         print("system: github configuration subsystem activated.");

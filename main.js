@@ -323,7 +323,6 @@ if (cmdInput) {
 
                         print(`system: configuring file tracking shift from [${oldFullPath}] to [${newFullPath}]...`);
 
-                        // If your github tool has a direct atomic rename handler, call it; otherwise execute safe transaction fallback sequences
                         if (registry['github'] && typeof registry['github'].renameFile === 'function') {
                             const success = await registry['github'].renameFile(oldFullPath, newFullPath);
                             if (success) {
@@ -336,7 +335,6 @@ if (cmdInput) {
                                 print(`error: file shift sequence denied by remote pipeline logic.`);
                             }
                         } else if (registry['github'] && typeof registry['github'].sync === 'function' && typeof registry['github'].delete === 'function' && typeof registry['github'].pull === 'function') {
-                            // High compatibility fallback: copy-contents-forward then release-old-node
                             let activeContent = fileBuffers[pendingRenameTarget] ? fileBuffers[pendingRenameTarget].join('\n') : null;
                             if (activeContent === null) {
                                 activeContent = await registry['github'].pull(oldFullPath);
@@ -372,27 +370,35 @@ if (cmdInput) {
                     const oldFullDir = getFullFilePath(pendingRenameTarget);
                     const newFullDir = getFullFilePath(newName);
                     
-                    print(`system: updating local structural node layout tags from [${oldFullDir}] to [${newFullDir}]...`);
-                    if (virtualDirectories.has(oldFullDir)) {
-                        virtualDirectories.delete(oldFullDir);
-                        virtualDirectories.add(newFullDir);
-                    }
+                    print(`system: configuring structural directory node updates from [${oldFullDir}] to [${newFullDir}]...`);
 
                     if (registry['github'] && typeof registry['github'].renameDirectory === 'function') {
                         const remoteSuccess = await registry['github'].renameDirectory(oldFullDir, newFullDir);
                         if (remoteSuccess) {
                             print(`system: cloud directory path mappings rewritten successfully.`);
+                            if (virtualDirectories.has(oldFullDir)) {
+                                virtualDirectories.delete(oldFullDir);
+                                virtualDirectories.add(newFullDir);
+                            }
+                            const pathIndex = currentPath.findIndex(p => p.toLowerCase() === pendingRenameTarget.toLowerCase());
+                            if (pathIndex !== -1) {
+                                currentPath[pathIndex] = newName;
+                                savePathState();
+                            }
                         } else {
-                            print(`error: remote tree modification failed or access was unverified.`);
+                            print(`error: remote tree modification failed or access was unverified. Local system rollback issued.`);
                         }
                     } else {
                         print(`system: local tree index adjusted. Note: GitHub REST specifications treat directories as virtual paths; files within this container require individual pushes.`);
-                    }
-
-                    const pathIndex = currentPath.findIndex(p => p.toLowerCase() === pendingRenameTarget.toLowerCase());
-                    if (pathIndex !== -1) {
-                        currentPath[pathIndex] = newName;
-                        savePathState();
+                        if (virtualDirectories.has(oldFullDir)) {
+                            virtualDirectories.delete(oldFullDir);
+                            virtualDirectories.add(newFullDir);
+                        }
+                        const pathIndex = currentPath.findIndex(p => p.toLowerCase() === pendingRenameTarget.toLowerCase());
+                        if (pathIndex !== -1) {
+                            currentPath[pathIndex] = newName;
+                            savePathState();
+                        }
                     }
                 }
 
