@@ -4,8 +4,8 @@ let activeRepo = localStorage.getItem('repository') || '';
 let pendingRepoCreation = null;
 
 const REPO_NAME_REGEX = /^[a-zA-Z0-9._-]+$/;
-const SAFE_FILE_NAME_REGEX = /^[a-zA-Z0-9._\- \/]+$/;
-const AUTH_TOKEN_REGEX = /^[a-zA-Z0-9_=\-]+$/;
+const SAFE_FILE_NAME_REGEX = /^[a-zA-Z0-9._\\-\\/]+$/;
+const AUTH_TOKEN_REGEX = /^[a-zA-Z0-9_=\\-\\.]+$/; 
 
 function sanitizeInputString(str) {
     return str.trim().replace(/[<>'"\`]/g, '');
@@ -102,8 +102,9 @@ export async function pushFileToGitHub(filePath, content) {
             }
         }
 
+        const actionType = sha ? 'Update' : 'Create';
         const payload = {
-            message: `Initial Commit`,
+            message: `${actionType} environment workspace tracking resource: ${sanitizeInputString(filePath)}`,
             content: base64Content
         };
 
@@ -194,7 +195,7 @@ export async function deletePathFromGitHub(filePath) {
         });
 
         if (!res.ok) {
-            if (res.status === 404) return true;
+            if (res.status === 404) return true; 
             return false;
         }
 
@@ -217,7 +218,7 @@ export async function deletePathFromGitHub(filePath) {
                     'Accept': 'application/vnd.github+json'
                 },
                 body: JSON.stringify({
-                    message: `Initial Commit`,
+                    message: `Purge workspace resource node: ${sanitizeInputString(filePath)}`,
                     sha: data.sha
                 })
             });
@@ -230,160 +231,13 @@ export async function deletePathFromGitHub(filePath) {
     }
 }
 
-export async function renameDirectoryInGitHub(oldDir, newDir) {
-    const rawToken = localStorage.getItem('user');
-    const rawUsername = localStorage.getItem('github_username');
-    const rawRepo = localStorage.getItem('repository');
-
-    if (!rawToken || !rawUsername || !rawRepo) return false;
-    if (!AUTH_TOKEN_REGEX.test(rawToken) || !REPO_NAME_REGEX.test(rawRepo)) return false;
-    if (!SAFE_FILE_NAME_REGEX.test(oldDir) || oldDir.includes('..')) return false;
-    if (!SAFE_FILE_NAME_REGEX.test(newDir) || newDir.includes('..')) return false;
-
-    const username = encodeURIComponent(rawUsername);
-    const repo = encodeURIComponent(rawRepo);
-    const commonHeaders = {
-        'Authorization': `Bearer ${rawToken}`,
-        'Accept': 'application/vnd.github+json'
-    };
-
-    try {
-        print(`system: connecting to git transaction engine for single-commit atomic shift...`);
-        
-        // 1. Find the default repository branch targeting index (main vs master context mapping)
-        const repoInfoRes = await fetch(`https://api.github.com/repos/${username}/${repo}`, { headers: commonHeaders });
-        if (!repoInfoRes.ok) {
-            print(`error: failed to retrieve repository details. status: ${repoInfoRes.status}`);
-            return false;
-        }
-        const repoInfo = await repoInfoRes.json();
-        const defaultBranch = repoInfo.default_branch || 'main';
-
-        // 2. Query active head reference pointer signature
-        print(`system: reading head reference for branch [${defaultBranch}]...`);
-        const refRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/ref/heads/${defaultBranch}`, { headers: commonHeaders });
-        if (!refRes.ok) {
-            print(`error: failed to read head branch reference layout mapping.`);
-            return false;
-        }
-        const refData = await refRes.json();
-        const parentCommitSha = refData.object.sha;
-
-        // 3. Download full repository recursive tree index composition
-        print(`system: loading repository object relationship graph map matrix...`);
-        const treeRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/trees/${parentCommitSha}?recursive=true`, { headers: commonHeaders });
-        if (!treeRes.ok) {
-            print(`error: failed to safely crawl repository git object tree layout entries.`);
-            return false;
-        }
-        const treeData = await treeRes.json();
-        
-        // 4. Transform folder tree path keys mapping array structures inside local layout memory
-        const cleanOldDir = oldDir.endsWith('/') ? oldDir : oldDir + '/';
-        const cleanNewDir = newDir.endsWith('/') ? newDir : newDir + '/';
-        let newTreeEntries = [];
-        let filesMovedCount = 0;
-
-        for (const item of treeData.tree) {
-            // Low-level Git trees automatically generate subfolders dynamically from file path configurations
-            if (item.type !== 'blob') continue;
-
-            if (item.path.startsWith(cleanOldDir)) {
-                const relativePath = item.path.substring(cleanOldDir.length);
-                newTreeEntries.push({
-                    path: cleanNewDir + relativePath,
-                    mode: item.mode,
-                    type: item.type,
-                    sha: item.sha // Point directly to the existing content SHA—no downloads or data changes needed
-                });
-                filesMovedCount++;
-            } else if (item.path === oldDir) {
-                newTreeEntries.push({
-                    path: newDir,
-                    mode: item.mode,
-                    type: item.type,
-                    sha: item.sha
-                });
-                filesMovedCount++;
-            } else {
-                // Keep everything else completely unmodified
-                newTreeEntries.push({
-                    path: item.path,
-                    mode: item.mode,
-                    type: item.type,
-                    sha: item.sha
-                });
-            }
-        }
-
-        if (filesMovedCount === 0) {
-            print(`warning: no active structural files discovered within directory path configuration [${oldDir}].`);
-            return false;
-        }
-
-        print(`system: staged ${filesMovedCount} file node(s) for reallocation. compiling atomic tree...`);
-
-        // 5. Post the absolute replacement tree object representation matrix
-        const createTreeRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/trees`, {
-            method: 'POST',
-            headers: { ...commonHeaders, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tree: newTreeEntries })
-        });
-        if (!createTreeRes.ok) {
-            print(`error: github rejected structural tree payload build compilation array format.`);
-            return false;
-        }
-        const newTreeData = await createTreeRes.json();
-        const newTreeSha = newTreeData.sha;
-
-        // 6. Build the combined individual commit pointing to the compiled tree framework
-        print(`system: packing transaction payload into single atomic commit manifest...`);
-        const createCommitRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/commits`, {
-            method: 'POST',
-            headers: { ...commonHeaders, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: `Rename directory '${oldDir}' to '${newDir}'`,
-                tree: newTreeSha,
-                parents: [parentCommitSha]
-            })
-        });
-        if (!createCommitRes.ok) {
-            print(`error: transaction commit verification generation failed under cloud processing.`);
-            return false;
-        }
-        const newCommitData = await createCommitRes.json();
-        const newCommitSha = newCommitData.sha;
-
-        // 7. Pivot head reference pointer array target to look safely at our new commit node
-        print(`system: pushing commit block to head reference array...`);
-        const updateRefRes = await fetch(`https://api.github.com/repos/${username}/${repo}/git/refs/heads/${defaultBranch}`, {
-            method: 'PATCH',
-            headers: { ...commonHeaders, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sha: newCommitSha, force: false })
-        });
-
-        if (updateRefRes.ok) {
-            print(`system: transaction complete! folder shifted cleanly via 1 consolidated atomic commit.`);
-            return true;
-        } else {
-            print(`error: head reference pointing pipeline shift execution blocked or rejected.`);
-            return false;
-        }
-
-    } catch (e) {
-        print(`error: transaction execution tracking pipeline failed unexpectedly: ${e.message}`);
-        return false;
-    }
-}
-
 const githubTool = {
-    helpText: "configure terminal verification credentials. subcommands: help, status, login/token, repo/name, confirm, logout",
+    helpText: "configure terminal verification credentials. subcommands: login/token, repo/name, confirm, logout, exit",
     prompt: "github>",
     sync: pushFileToGitHub,
     pull: pullFileFromGitHub,
     tree: fetchRepoTree,
     delete: deletePathFromGitHub,
-    renameDirectory: renameDirectoryInGitHub,
     
     onEnter: async () => {
         print("system: github configuration subsystem activated.");
@@ -396,44 +250,89 @@ const githubTool = {
             if (repo) {
                 print(`active structural tracking repo context: ${sanitizeInputString(repo)}`);
             } else {
-                print("active workspace repo: none contextually bound (use root traversal or 'repo/name')");
+                print("active workspace repo: none contextually bound (use 'repo/name')");
             }
         } else {
             print("status: unauthenticated. authorize workspace by generating a personal access token and entering: login/token");
         }
-        print("press CTRL + E to shift back to your main structural shell loop prompt.");
+        print("type 'exit' or press CTRL + E to shift back to your main prompt loop.");
     },
 
     handleInput: async (input) => {
         const cleanInput = input.trim();
         if (cleanInput === '') return;
 
-        print(`github>${sanitizeInputString(cleanInput)}`);
+        let action = '';
+        let value = '';
+        let isRawToken = false;
 
-        const parts = cleanInput.split('/');
-        const action = parts[0].trim().toLowerCase();
-        const value = parts.slice(1).join('/').trim();
+        // 1. Parsing logic handles raw tokens or split action lines
+        if (cleanInput.startsWith('ghp_') || cleanInput.startsWith('github_pat_')) {
+            action = 'login';
+            value = cleanInput;
+            isRawToken = true;
+        } else {
+            const spaceIdx = cleanInput.indexOf(' ');
+            const slashIdx = cleanInput.indexOf('/');
+            let delimIdx = -1;
 
-        if (action === 'help') {
-            print(githubTool.helpText);
-            return;
+            if (spaceIdx !== -1 && slashIdx !== -1) {
+                delimIdx = Math.min(spaceIdx, slashIdx);
+            } else {
+                delimIdx = spaceIdx !== -1 ? spaceIdx : slashIdx;
+            }
+
+            if (delimIdx === -1) {
+                action = cleanInput.toLowerCase();
+                value = '';
+            } else {
+                action = cleanInput.substring(0, delimIdx).trim().toLowerCase();
+                value = cleanInput.substring(delimIdx + 1).trim();
+            }
+
+            if (action === 'login') {
+                if (value.toLowerCase().startsWith('token/')) value = value.substring(6).trim();
+                else if (value.toLowerCase().startsWith('token ')) value = value.substring(6).trim();
+            }
+            if (action === 'repo') {
+                if (value.toLowerCase().startsWith('name/')) value = value.substring(5).trim();
+                else if (value.toLowerCase().startsWith('name ')) value = value.substring(5).trim();
+            }
         }
 
-        if (action === 'status') {
-            const token = localStorage.getItem('user');
-            const username = localStorage.getItem('github_username');
-            const repo = localStorage.getItem('repository');
-
-            if (token && username) {
-                print(`status: verified authorization stream caching as @${sanitizeInputString(username)}`);
-                if (repo) {
-                    print(`active structural tracking repo context: ${sanitizeInputString(repo)}`);
-                } else {
-                    print("active workspace repo: none contextually bound (use root traversal or 'repo/name')");
-                }
-            } else {
-                print("status: unauthenticated. authorize workspace by generating a personal access token and entering: login/token");
+        // 2. Security Masking Echo: Print feedback line safely without leaking cleartext credentials
+        if (action === 'login' && value) {
+            let maskedValue = '••••••••••••••••';
+            if (value.startsWith('ghp_') && value.length > 8) {
+                maskedValue = 'ghp_' + '••••••••••••' + value.substring(value.length - 4);
+            } else if (value.startsWith('github_pat_') && value.length > 15) {
+                maskedValue = 'github_pat_' + '••••••••••••' + value.substring(value.length - 4);
+            } else if (value.length > 6) {
+                maskedValue = value.substring(0, 2) + '••••••••' + value.substring(value.length - 2);
             }
+
+            // FIXED: If user pasted a raw token directly, prepend the explicit command format for clear terminal history tracking
+            if (isRawToken) {
+                print(`github>login/${sanitizeInputString(maskedValue)}`);
+            } else {
+                if (cleanInput.toLowerCase().includes('token/')) {
+                    print(`github>login/token/${sanitizeInputString(maskedValue)}`);
+                } else if (cleanInput.toLowerCase().includes('token ')) {
+                    print(`github>login token ${sanitizeInputString(maskedValue)}`);
+                } else {
+                    const separator = cleanInput.includes('/') ? '/' : ' ';
+                    print(`github>login${separator}${sanitizeInputString(maskedValue)}`);
+                }
+            }
+        } else {
+            // Echo normal, non-sensitive commands completely unmodified
+            print(`github>${sanitizeInputString(cleanInput)}`);
+        }
+
+        // Handle structural navigation exits manually
+        if (action === 'exit' || action === 'back') {
+            const { setMode } = await import('./main.js');
+            setMode("main", getSystemPrompt());
             return;
         }
 
@@ -463,8 +362,7 @@ const githubTool = {
                         localStorage.setItem('user', value);
                         localStorage.setItem('github_username', userData.login);
                         print(`system: successfully authenticated as @${sanitizeInputString(userData.login)}!`);
-                        const { setMode } = await import('./main.js');
-                        setMode("main", getSystemPrompt());
+                        print("status: you are still in configuration mode. Now bind your workspace target via: repo/name");
                     } else {
                         print("error: failed to safely extract parseable metadata profile from endpoint data payload.");
                     }
@@ -508,8 +406,7 @@ const githubTool = {
                     localStorage.setItem('repository', value);
                     activeRepo = value;
                     print(`system: successfully set target repository to: ${sanitizeInputString(value)}`);
-                    const { setMode } = await import('./main.js');
-                    setMode("main", getSystemPrompt());
+                    print("status: setup successfully cached! type 'exit' to deploy configurations to terminal prompt.");
                 } else if (checkRes.status === 404) {
                     pendingRepoCreation = value;
                     print(`warning: repository '${sanitizeInputString(value)}' does not exist yet.`);
@@ -559,8 +456,7 @@ const githubTool = {
                     print(`system: successfully initialized private repository '${sanitizeInputString(repoToCreate)}'!`);
                     localStorage.setItem('repository', repoToCreate);
                     activeRepo = repoToCreate;
-                    const { setMode } = await import('./main.js');
-                    setMode("main", getSystemPrompt());
+                    print("status: workspace initialized! type 'exit' to use your environment core.");
                 } else {
                     print("error: failed to automatically provision a new github repository storage engine.");
                 }
@@ -582,7 +478,7 @@ const githubTool = {
             return;
         }
 
-        print("error: unhandled sub-command. available options: help, status, login/token, repo/name, confirm, logout");
+        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, logout, exit");
     },
     onExit: () => {
         print("system: exited github config mode.");
