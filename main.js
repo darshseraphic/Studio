@@ -30,6 +30,7 @@ export function savePathState() {
 export function getSystemPrompt() {
     const username = localStorage.getItem('github_username') || 'guest';
     const repo = localStorage.getItem('repository') || '';
+    const githubActive = localStorage.getItem('github_active') === 'true';
     let pathStr = '';
 
     if (repo) {
@@ -37,6 +38,8 @@ export function getSystemPrompt() {
         if (currentPath.length > 0) {
             pathStr += '/' + currentPath.join('/');
         }
+    } else if (githubActive) {
+        pathStr = '/github';
     }
     return `${username}${pathStr}>`;
 }
@@ -154,12 +157,8 @@ if (cmdInput) {
                 }
             }
 
-            // GitHub workspace tooling now owns all repo/file navigation state.
-            // Loaded dynamically to avoid a static circular import with github.js
-            // (which itself imports registerTool/print/etc. from this module).
             const GitHub = await import('./github.js');
 
-            // --- DELETE / RENAME INTERACTIVE STATE MACHINE (owned by github.js) ---
             if (GitHub.hasPendingInteraction()) {
                 await GitHub.handlePendingInteraction(rawInput);
                 return;

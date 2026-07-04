@@ -310,7 +310,7 @@ registerTool('save', {
         if (registry['github'] && typeof registry['github'].sync === 'function') {
             const fullPath = getFullFilePath(editingFile);
             print(`system: streaming serialized code structural lines up to remote endpoint: [${fullPath}]...`);
-            const success = await registry['github'].sync(fullPath, editorLines.join('\n'));
+            const success = await registry['github'].sync(fullPath, editorLines.join('\n'), "Initial commit");
             if (success) {
                 print(`system: backup execution sequence complete. cloud synchronization fully validated.`);
             } else {

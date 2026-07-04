@@ -7,7 +7,6 @@ import {
 let activeRepo = localStorage.getItem('repository') || '';
 let pendingRepoCreation = null;
 
-// --- Interactive multi-step state (moved here from main.js) ---
 let pendingDeleteTarget = "";
 let pendingDeleteType = "";
 let pendingRenameTarget = "";
@@ -20,10 +19,6 @@ const AUTH_TOKEN_REGEX = /^[a-zA-Z0-9_=\\-\\.]+$/;
 function sanitizeInputString(str) {
     return str.trim().replace(/[<>'"\`]/g, '');
 }
-
-// ===================================================================
-// Low-level GitHub REST helpers (unchanged from before)
-// ===================================================================
 
 export async function fetchRepoTree(repoName, subDirectoryPath = '') {
     const rawToken = localStorage.getItem('user');
@@ -50,10 +45,10 @@ export async function fetchRepoTree(repoName, subDirectoryPath = '') {
 
         if (!res.ok) {
             if (res.status === 404) {
-                return [];
+                return null;
             }
             print(`error: directory retrieval rejected by GitHub with status ${res.status}.`);
-            return [];
+            return null;
         }
 
         const structuralData = await res.json();
@@ -73,7 +68,39 @@ export async function fetchRepoTree(repoName, subDirectoryPath = '') {
     }
 }
 
-export async function pushFileToGitHub(filePath, content) {
+export async function fetchUserRepos() {
+    const rawToken = localStorage.getItem('user');
+    if (!rawToken) {
+        print("error: authentication token missing. login first via github > login/token.");
+        return [];
+    }
+
+    try {
+        const res = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${rawToken}`,
+                'Accept': 'application/vnd.github+json'
+            }
+        });
+
+        if (!res.ok) {
+            print(`error: failed to retrieve repository list. GitHub status ${res.status}.`);
+            return [];
+        }
+
+        const data = await res.json();
+        if (Array.isArray(data)) {
+            return data.map(r => ({ name: r.name, private: r.private }));
+        }
+        return [];
+    } catch (err) {
+        print(`error: network error fetching repository list: ${err.message}`);
+        return [];
+    }
+}
+
+export async function pushFileToGitHub(filePath, content, commitMessage = null) {
     const rawToken = localStorage.getItem('user');
     const rawUsername = localStorage.getItem('github_username');
     const rawRepo = localStorage.getItem('repository');
@@ -118,7 +145,7 @@ export async function pushFileToGitHub(filePath, content) {
 
         const actionType = sha ? 'Update' : 'Create';
         const payload = {
-            message: `${actionType} environment workspace tracking resource: ${sanitizeInputString(filePath)}`,
+            message: commitMessage || `${actionType} environment workspace tracking resource: ${sanitizeInputString(filePath)}`,
             content: base64Content
         };
 
@@ -245,6 +272,36 @@ export async function deletePathFromGitHub(filePath) {
     }
 }
 
+async function renameDirectoryOnGitHub(repoName, oldDirPath, newDirPath) {
+    const treeItems = await fetchRepoTree(repoName, oldDirPath);
+    if (!treeItems) return false;
+
+    let overallSuccess = true;
+    for (const item of treeItems) {
+        const oldItemPath = item.path;
+        const newItemPath = newDirPath + oldItemPath.substring(oldDirPath.length);
+
+        if (item.type === 'dir') {
+            const nestedSuccess = await renameDirectoryOnGitHub(repoName, oldItemPath, newItemPath);
+            if (!nestedSuccess) overallSuccess = false;
+        } else {
+            const content = await pullFileFromGitHub(oldItemPath);
+            if (content === null) {
+                overallSuccess = false;
+                continue;
+            }
+            const created = await pushFileToGitHub(newItemPath, content);
+            if (!created) {
+                overallSuccess = false;
+                continue;
+            }
+            const purged = await deletePathFromGitHub(oldItemPath);
+            if (!purged) overallSuccess = false;
+        }
+    }
+    return overallSuccess;
+}
+
 async function verifyRemotePath(repoName, directoryPath = '') {
     if (directoryPath && virtualDirectories.has(directoryPath)) {
         return true;
@@ -285,15 +342,13 @@ async function verifyRemotePath(repoName, directoryPath = '') {
     }
 }
 
-// ===================================================================
-// Context / help helpers
-// ===================================================================
+function getGithubConfigPrompt() {
+    const username = localStorage.getItem('github_username') || 'guest';
+    return `${username}/github>`;
+}
 
-// Whether we're currently "inside" the github workspace (a repo is bound).
-// Drives both the prompt shape (username/github/repo/path>) and which
-// help text gets shown.
 export function isInGithubContext() {
-    return !!localStorage.getItem('repository');
+    return localStorage.getItem('github_active') === 'true' || !!localStorage.getItem('repository');
 }
 
 export function printGithubHelp() {
@@ -303,36 +358,31 @@ export function printGithubHelp() {
     print("github workspace command maps:");
     print("  github                     - switch context configuration sub-menus");
     print("  editor                     - trigger universal plaintext file editor");
-    print("  edit/[file_name]           - open targeted items inside the workspace text editor");
+    print("  edit/[file_name]           - fletch and open targeted items inside the workspace text editor");
     print("  cd [dir_name]              - descend into a sub-directory node array");
     print("  cd [file_name]             - pull and perform immediate read-only preview console blocks");
     print("  cd .. (or ../../)          - perform relative tracking stack reversals");
     print("  [relative_path] (ex: ../)  - quick relative tracking jumps without writing 'cd'");
-    print(`${dynamicUserCmd}- direct workspace layout structural reset jump to root prompt`);
+    print(`${dynamicUserCmd}- unbind the active repository, stay inside the github workspace`);
     print("  create/[target]            - allocate new repositories, sub-directories, or code files");
     print("  delete/[target]            - clear architectural nodes or elements with interactive safeguards");
     print("  rename/[target]            - change resource titles or repository labels interactively");
     print("  pull/[file_name]           - restore structural content configurations from cloud nodes");
     print("  save/[file_name]           - serialize buffer arrays and execute remote pushes to cloud git");
     print("  run/[file_name]            - compile and render document nodes to sub-sandbox tabs cleanly");
-    print("  fletch                     - list all file nodes and directories at root level");
+    print("  fletch                     - list every repository under your github account (no repo bound)");
     print("  fletch/[directory_name]    - parse file extensions and nested nodes inside a subdirectory");
     print("  fletch/[file_name.exten]   - display full layout code contents of a file node instantly");
     print("  description                - fetch the current repository description");
-    print("  edit/description           - fetch the current repository description and edit it");
+    print("  edit/description           - fletch and edit the current repository description");
     print("  exit                       - leave the github workspace and return to the default prompt");
 }
-
-// ===================================================================
-// Pending interactive state machine (delete / rename confirmations)
-// ===================================================================
 
 export function hasPendingInteraction() {
     return !!(pendingDeleteTarget || pendingRenameTarget);
 }
 
 export async function handlePendingInteraction(rawInput) {
-    // --- DELETION INTERACTIVE STATE MACHINE ---
     if (pendingDeleteTarget) {
         print(`> ${rawInput}`);
 
@@ -395,7 +445,6 @@ export async function handlePendingInteraction(rawInput) {
         return;
     }
 
-    // --- RENAME INTERACTIVE STATE MACHINE ---
     if (pendingRenameTarget) {
         print(`> ${rawInput}`);
         const newName = rawInput.trim();
@@ -481,9 +530,18 @@ export async function handlePendingInteraction(rawInput) {
         else if (pendingRenameType === 'directory') {
             const oldFullDir = getFullFilePath(pendingRenameTarget);
             const newFullDir = getFullFilePath(newName);
+            const repoName = localStorage.getItem('repository');
 
             print(`system: configuring structural directory node updates from [${oldFullDir}] to [${newFullDir}]...`);
-            print(`system: local tree index adjusted. Note: GitHub REST specifications treat directories as virtual paths; files within this container require individual pushes.`);
+            print(`system: migrating each remote blob under the new directory path and purging old nodes...`);
+
+            const success = await renameDirectoryOnGitHub(repoName, oldFullDir, newFullDir);
+            if (success) {
+                print(`system: cloud directory path mappings rewritten successfully.`);
+            } else {
+                print(`warning: some remote directory nodes failed to migrate. local tree index adjusted regardless.`);
+            }
+
             if (virtualDirectories.has(oldFullDir)) {
                 virtualDirectories.delete(oldFullDir);
                 virtualDirectories.add(newFullDir);
@@ -501,10 +559,6 @@ export async function handlePendingInteraction(rawInput) {
         return;
     }
 }
-
-// ===================================================================
-// Workspace command router (called from main.js)
-// ===================================================================
 
 const WORKSPACE_FIRST_SEGMENTS = new Set(['create', 'delete', 'rename', 'pull', 'save', 'run', 'fletch']);
 
@@ -528,9 +582,15 @@ export function isWorkspaceCommand(cleanCommand) {
 export async function handleWorkspaceCommand(cleanCommand) {
     const lowerCommand = cleanCommand.toLowerCase();
     const currentUsername = (localStorage.getItem('github_username') || 'guest').toLowerCase();
+    const firstSegment = lowerCommand.split('/')[0];
+    const isRootReset = (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`);
 
-    // --- root reset ---
-    if (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`) {
+    if (firstSegment !== 'github' && lowerCommand !== 'exit' && lowerCommand !== 'editor' && !isRootReset && !isInGithubContext()) {
+        print("error: you're not inside the github workspace yet. type 'github' to configure access first.");
+        return;
+    }
+
+    if (isRootReset) {
         localStorage.removeItem('repository');
         currentPath.length = 0;
         savePathState();
@@ -538,15 +598,15 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- exit github workspace context entirely ---
     if (lowerCommand === 'exit') {
         const activeRepoName = localStorage.getItem('repository');
-        if (!activeRepoName && currentPath.length === 0) {
+        if (!activeRepoName && currentPath.length === 0 && !isInGithubContext()) {
             print("system: no active github workspace context to exit.");
             setMode("main", getSystemPrompt());
             return;
         }
         localStorage.removeItem('repository');
+        localStorage.removeItem('github_active');
         currentPath.length = 0;
         virtualDirectories.clear();
         savePathState();
@@ -555,7 +615,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- relative ".." jumps ---
     if (lowerCommand === '..' || lowerCommand.startsWith('../') || lowerCommand.endsWith('/..')) {
         const steps = cleanCommand.split('/');
         steps.forEach(step => {
@@ -572,7 +631,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- cd ---
     if (lowerCommand === 'cd' || lowerCommand.startsWith('cd ') || lowerCommand.startsWith('cd/')) {
         let pathTarget = '';
         if (lowerCommand.startsWith('cd ')) {
@@ -646,13 +704,12 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    const firstSegment = lowerCommand.split('/')[0];
     const targetPayload = cleanCommand.split('/').slice(1).join('/');
 
-    // --- enter the github config sub-menu (login/repo/confirm/logout) ---
     if (firstSegment === 'github') {
+        localStorage.setItem('github_active', 'true');
         usedToolsInSession.add('github');
-        setMode('github', githubTool.prompt || "");
+        setMode('github', getGithubConfigPrompt());
         if (typeof githubTool.onEnter === 'function') {
             await githubTool.onEnter();
         }
@@ -662,11 +719,20 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- fletch ---
     if (firstSegment === 'fletch') {
         const activeRepoName = localStorage.getItem('repository');
+
         if (!activeRepoName) {
-            print("error: no active repository detected. connect a repo using github tool first.");
+            print("system: fletching all repositories bound to your github account...");
+            const repos = await fetchUserRepos();
+            if (repos.length > 0) {
+                print("------------------------------------------------");
+                repos.forEach(r => print(`-- ${r.name}${r.private ? ' (private)' : ''}`));
+                print("------------------------------------------------");
+                print(`total repositories tracked: ${repos.length}.`);
+            } else {
+                print("system: no repositories found under this account, or retrieval failed.");
+            }
             return;
         }
 
@@ -704,7 +770,9 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
         print(`system: fletching remote directory manifest for [${fetchPath || 'root'}]...`);
         const treeItems = await fetchRepoTree(activeRepoName, fetchPath);
-        if (treeItems && treeItems.length > 0) {
+        if (treeItems === null) {
+            print(`error: directory '${fetchPath || 'root'}' does not exist in the active repository.`);
+        } else if (treeItems.length > 0) {
             print("------------------------------------------------");
             const dirs = treeItems.filter(item => item.type === 'dir');
             const files = treeItems.filter(item => item.type === 'file');
@@ -720,13 +788,12 @@ export async function handleWorkspaceCommand(cleanCommand) {
             });
             print("------------------------------------------------");
             print(`total contents tracked: ${treeItems.length} nodes.`);
-        } else if (treeItems && treeItems.length === 0) {
+        } else {
             print("system: directory target path is completely empty.");
         }
         return;
     }
 
-    // --- create ---
     if (firstSegment === 'create') {
         if (!targetPayload) {
             print("error: specify valid initialization target definitions. e.g. create/app.js or create/repo-name");
@@ -809,7 +876,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- delete (init) ---
     if (firstSegment === 'delete') {
         if (!targetPayload) {
             print("error: specify valid target resource configurations to delete, e.g. delete/index.html");
@@ -831,7 +897,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- rename (init) ---
     if (firstSegment === 'rename') {
         if (!targetPayload) {
             print("error: specify a valid target resource to rename, e.g. rename/index.html or rename/old-repo-name");
@@ -853,10 +918,8 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- editor / edit/[file] ---
     if (firstSegment === 'edit' || firstSegment === 'editor') {
         if (!cleanCommand.includes('/')) {
-            // bare "editor" -> generic tool entry (still works for note/calculator/weather buffers, etc.)
             if (registry['editor']) {
                 usedToolsInSession.add('editor');
                 setMode('editor', registry['editor'].prompt || "");
@@ -873,30 +936,39 @@ export async function handleWorkspaceCommand(cleanCommand) {
             print("error: specify path name parameter, e.g. edit/note.txt");
             return;
         }
+
+        const activeRepoName = localStorage.getItem('repository');
+
         if (targetPayload === 'description') {
-            const activeRepoName = localStorage.getItem('repository');
             if (!activeRepoName) {
                 print("error: no active repository detected.");
                 return;
             }
-            if (!fileBuffers['description']) {
-                const token = localStorage.getItem('user');
-                const username = localStorage.getItem('github_username');
-                try {
-                    const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
-                        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
-                    });
-                    if (res.ok) {
-                        const data = await res.json();
-                        fileBuffers['description'] = [data.description || ""];
-                    } else {
-                        fileBuffers['description'] = [""];
-                    }
-                } catch (e) {
+            print("system: fletching repository description from remote...");
+            const token = localStorage.getItem('user');
+            const username = localStorage.getItem('github_username');
+            try {
+                const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
+                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    fileBuffers['description'] = [data.description || ""];
+                } else {
                     fileBuffers['description'] = [""];
                 }
+            } catch (e) {
+                fileBuffers['description'] = [""];
+            }
+        } else if (activeRepoName) {
+            const fullPath = getFullFilePath(targetPayload);
+            print(`system: fletching remote content for [${fullPath}]...`);
+            const remoteContent = await pullFileFromGitHub(fullPath);
+            if (remoteContent !== null) {
+                fileBuffers[targetPayload] = remoteContent.replace(/\r\n/g, '\n').split('\n');
             }
         }
+
         if (registry['editor']) {
             usedToolsInSession.add('editor');
             setMode('editor', registry['editor'].prompt || "01 | ");
@@ -910,7 +982,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- pull ---
     if (firstSegment === 'pull') {
         if (!targetPayload) {
             print("error: specify path name parameter, e.g. pull/index.html");
@@ -928,7 +999,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- save ---
     if (firstSegment === 'save') {
         if (!targetPayload) {
             print("error: specify target save path parameters, e.g. save/index.html");
@@ -975,7 +1045,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
         }
         const fullPath = getFullFilePath(targetPayload);
         print(`system: executing structural write sequences to remote: [${fullPath}]...`);
-        const success = await pushFileToGitHub(fullPath, contentLines.join('\n'));
+        const success = await pushFileToGitHub(fullPath, contentLines.join('\n'), "Initial commit");
         if (success) {
             print(`system: cloud repository sync complete. verified ${targetPayload}.`);
         } else {
@@ -984,7 +1054,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- run ---
     if (firstSegment === 'run') {
         if (!targetPayload) {
             print("error: specify run target parameters, e.g. run/note.txt");
@@ -1050,7 +1119,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
         return;
     }
 
-    // --- description (bare) ---
     if (lowerCommand === 'description') {
         const activeRepoName = localStorage.getItem('repository');
         if (!activeRepoName) {
@@ -1078,10 +1146,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
     print(`error: command signature or directory target path "${cleanCommand}" unrecognized.`);
 }
 
-// ===================================================================
-// The github config sub-menu tool (login / repo / confirm / logout / exit)
-// ===================================================================
-
 const githubTool = {
     helpText: "configure terminal verification credentials. subcommands: login/token, repo/name, confirm, logout, exit",
     prompt: "github>",
@@ -1091,6 +1155,7 @@ const githubTool = {
     delete: deletePathFromGitHub,
 
     onEnter: async () => {
+        localStorage.setItem('github_active', 'true');
         print("system: github configuration subsystem activated.");
         const token = localStorage.getItem('user');
         const username = localStorage.getItem('github_username');
@@ -1101,7 +1166,7 @@ const githubTool = {
             if (repo) {
                 print(`active structural tracking repo context: ${sanitizeInputString(repo)}`);
             } else {
-                print("active workspace repo: none contextually bound (use 'repo/name')");
+                print("active workspace repo: none contextually bound (use 'repo/name', or exit and 'fletch' to list repos)");
             }
         } else {
             print("status: unauthenticated. authorize workspace by generating a personal access token and entering: login/token");
@@ -1117,7 +1182,6 @@ const githubTool = {
         let value = '';
         let isRawToken = false;
 
-        // 1. Parsing logic handles raw tokens or split action lines
         if (cleanInput.startsWith('ghp_') || cleanInput.startsWith('github_pat_')) {
             action = 'login';
             value = cleanInput;
@@ -1151,7 +1215,6 @@ const githubTool = {
             }
         }
 
-        // 2. Security Masking Echo: Print feedback line safely without leaking cleartext credentials
         if (action === 'login' && value) {
             let maskedValue = '••••••••••••••••';
             if (value.startsWith('ghp_') && value.length > 8) {
@@ -1178,7 +1241,6 @@ const githubTool = {
             print(`github>${sanitizeInputString(cleanInput)}`);
         }
 
-        // Handle structural navigation exits manually
         if (action === 'exit' || action === 'back') {
             setMode("main", getSystemPrompt());
             return;
@@ -1318,6 +1380,7 @@ const githubTool = {
             localStorage.removeItem('user');
             localStorage.removeItem('github_username');
             localStorage.removeItem('repository');
+            localStorage.removeItem('github_active');
             currentPath.length = 0;
             virtualDirectories.clear();
             savePathState();
@@ -1325,6 +1388,11 @@ const githubTool = {
             pendingRepoCreation = null;
             print("system: authentication tracking arrays systematically cleared.");
             setMode("main", getSystemPrompt());
+            return;
+        }
+
+        if (isWorkspaceCommand(cleanInput)) {
+            await handleWorkspaceCommand(cleanInput);
             return;
         }
 
