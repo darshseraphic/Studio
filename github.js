@@ -845,7 +845,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             print("------------------------------------------------");
             issues.forEach(issue => {
                 const marker = issue.state === 'open' ? '++' : '--';
-                print(`${marker} #${issue.number} ${issue.title}`);
+                print(`${marker} ${issue.number} ${issue.title}`);
             });
             print("------------------------------------------------");
             print(`total issues tracked: ${issues.length}.`);
@@ -864,7 +864,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 return;
             }
             const newState = subAction === 'close' ? 'closed' : 'open';
-            print(`system: updating issue #${issueNumber} state to '${newState}'...`);
+            print(`system: updating issue ${issueNumber} state to '${newState}'...`);
             try {
                 const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
                     method: 'PATCH',
@@ -876,7 +876,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                     body: JSON.stringify({ state: newState })
                 });
                 if (res.ok) {
-                    print(`system: issue #${issueNumber} successfully ${subAction === 'close' ? 'closed' : 'reopened'}.`);
+                    print(`system: issue ${issueNumber} successfully ${subAction === 'close' ? 'closed' : 'reopened'}.`);
                 } else {
                     print(`error: failed to update issue state. GitHub status ${res.status}.`);
                 }
@@ -900,7 +900,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 return;
             }
 
-            print(`system: posting comment to issue #${issueNumber}...`);
+            print(`system: posting comment to issue ${issueNumber}...`);
             try {
                 const commentRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}/comments`, {
                     method: 'POST',
@@ -916,7 +916,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                     print(`error: failed to post comment. GitHub status ${commentRes.status}.`);
                     return;
                 }
-                print(`system: comment posted successfully to issue #${issueNumber}.`);
+                print(`system: comment posted successfully to issue ${issueNumber}.`);
 
                 if (subAction === 'fixed') {
                     const closeRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
@@ -929,7 +929,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                         body: JSON.stringify({ state: 'closed' })
                     });
                     if (closeRes.ok) {
-                        print(`system: issue #${issueNumber} marked as closed.`);
+                        print(`system: issue ${issueNumber} marked as closed.`);
                     } else {
                         print(`error: comment posted, but failed to close the issue. GitHub status ${closeRes.status}.`);
                     }
@@ -963,7 +963,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
         const marker = matched.state === 'open' ? '++' : '--';
         print("------------------------------------------------");
-        print(`${marker} #${matched.number} ${matched.title}`);
+        print(`${marker} ${matched.number} ${matched.title}`);
         print(`state: ${matched.state}`);
         print(`author: ${matched.user ? matched.user.login : 'unknown'}`);
         print(`created: ${matched.created_at}`);
