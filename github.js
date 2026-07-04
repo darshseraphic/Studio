@@ -302,6 +302,30 @@ async function renameDirectoryOnGitHub(repoName, oldDirPath, newDirPath) {
     return overallSuccess;
 }
 
+async function fetchRepoIssues(repoName, state = 'all') {
+    const token = localStorage.getItem('user');
+    const username = localStorage.getItem('github_username');
+    if (!token || !username) return null;
+
+    try {
+        const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(repoName)}/issues?state=${state}&per_page=100`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/vnd.github+json'
+            }
+        });
+
+        if (!res.ok) return null;
+
+        const data = await res.json();
+        if (!Array.isArray(data)) return null;
+        return data.filter(item => !item.pull_request);
+    } catch (e) {
+        return null;
+    }
+}
+
 async function verifyRemotePath(repoName, directoryPath = '') {
     if (directoryPath && virtualDirectories.has(directoryPath)) {
         return true;
@@ -375,6 +399,12 @@ export function printGithubHelp() {
     print("  fletch/[file_name.exten]   - display full layout code contents of a file node instantly");
     print("  description                - fetch the current repository description");
     print("  edit/description           - fletch and edit the current repository description");
+    print("  issues                     - list repository issues (++ open, -- closed)");
+    print("  issues/[number or title]   - fletch full details for a specific issue");
+    print("  issues/close/[number]      - close an open issue");
+    print("  issues/reopen/[number]     - reopen a closed issue");
+    print(`  issues/comment/[number]/"msg" - post a comment on an issue`);
+    print(`  issues/fixed/[number]/"msg"   - post a comment and close the issue`);
     print("  exit                       - leave the github workspace and return to the default prompt");
 }
 
@@ -560,7 +590,7 @@ export async function handlePendingInteraction(rawInput) {
     }
 }
 
-const WORKSPACE_FIRST_SEGMENTS = new Set(['create', 'delete', 'rename', 'pull', 'save', 'run', 'fletch']);
+const WORKSPACE_FIRST_SEGMENTS = new Set(['create', 'delete', 'rename', 'pull', 'save', 'run', 'fletch', 'issues']);
 
 export function isWorkspaceCommand(cleanCommand) {
     const lowerCommand = cleanCommand.toLowerCase();
@@ -791,6 +821,158 @@ export async function handleWorkspaceCommand(cleanCommand) {
         } else {
             print("system: directory target path is completely empty.");
         }
+        return;
+    }
+
+    if (firstSegment === 'issues') {
+        const activeRepoName = localStorage.getItem('repository');
+        if (!activeRepoName) {
+            print("error: no active repository detected.");
+            return;
+        }
+
+        if (!targetPayload) {
+            print(`system: fletching issues for repository '${activeRepoName}'...`);
+            const issues = await fetchRepoIssues(activeRepoName, 'all');
+            if (issues === null) {
+                print("error: failed to retrieve issues. verify authentication and repository access.");
+                return;
+            }
+            if (issues.length === 0) {
+                print("system: no issues found in this repository.");
+                return;
+            }
+            print("------------------------------------------------");
+            issues.forEach(issue => {
+                const marker = issue.state === 'open' ? '++' : '--';
+                print(`${marker} #${issue.number} ${issue.title}`);
+            });
+            print("------------------------------------------------");
+            print(`total issues tracked: ${issues.length}.`);
+            return;
+        }
+
+        const subParts = targetPayload.split('/');
+        const subAction = subParts[0].toLowerCase();
+        const token = localStorage.getItem('user');
+        const username = localStorage.getItem('github_username');
+
+        if (subAction === 'close' || subAction === 'reopen') {
+            const issueNumber = subParts.slice(1).join('/').trim().replace('#', '');
+            if (!issueNumber || !/^\d+$/.test(issueNumber)) {
+                print(`error: specify a valid issue number, e.g. issues/${subAction}/12`);
+                return;
+            }
+            const newState = subAction === 'close' ? 'closed' : 'open';
+            print(`system: updating issue #${issueNumber} state to '${newState}'...`);
+            try {
+                const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/vnd.github+json'
+                    },
+                    body: JSON.stringify({ state: newState })
+                });
+                if (res.ok) {
+                    print(`system: issue #${issueNumber} successfully ${subAction === 'close' ? 'closed' : 'reopened'}.`);
+                } else {
+                    print(`error: failed to update issue state. GitHub status ${res.status}.`);
+                }
+            } catch (e) {
+                print(`error: network error updating issue: ${e.message}`);
+            }
+            return;
+        }
+
+        if (subAction === 'comment' || subAction === 'fixed') {
+            const issueNumber = (subParts[1] || '').trim().replace('#', '');
+            let message = subParts.slice(2).join('/').trim();
+            message = message.replace(/^["']|["']$/g, '');
+
+            if (!issueNumber || !/^\d+$/.test(issueNumber)) {
+                print(`error: specify a valid issue number, e.g. issues/${subAction}/12/"message"`);
+                return;
+            }
+            if (!message) {
+                print(`error: specify a comment message, e.g. issues/${subAction}/12/"message"`);
+                return;
+            }
+
+            print(`system: posting comment to issue #${issueNumber}...`);
+            try {
+                const commentRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}/comments`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/vnd.github+json'
+                    },
+                    body: JSON.stringify({ body: message })
+                });
+
+                if (!commentRes.ok) {
+                    print(`error: failed to post comment. GitHub status ${commentRes.status}.`);
+                    return;
+                }
+                print(`system: comment posted successfully to issue #${issueNumber}.`);
+
+                if (subAction === 'fixed') {
+                    const closeRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/vnd.github+json'
+                        },
+                        body: JSON.stringify({ state: 'closed' })
+                    });
+                    if (closeRes.ok) {
+                        print(`system: issue #${issueNumber} marked as closed.`);
+                    } else {
+                        print(`error: comment posted, but failed to close the issue. GitHub status ${closeRes.status}.`);
+                    }
+                }
+            } catch (e) {
+                print(`error: network error posting comment: ${e.message}`);
+            }
+            return;
+        }
+
+        print(`system: fletching issue details for '${targetPayload}'...`);
+        const issues = await fetchRepoIssues(activeRepoName, 'all');
+        if (issues === null) {
+            print("error: failed to retrieve issues. verify authentication and repository access.");
+            return;
+        }
+
+        const numericTarget = targetPayload.replace('#', '').trim();
+        let matched = null;
+        if (/^\d+$/.test(numericTarget)) {
+            matched = issues.find(issue => String(issue.number) === numericTarget);
+        }
+        if (!matched) {
+            matched = issues.find(issue => issue.title.toLowerCase() === targetPayload.toLowerCase());
+        }
+
+        if (!matched) {
+            print(`error: issue '${targetPayload}' not found in this repository.`);
+            return;
+        }
+
+        const marker = matched.state === 'open' ? '++' : '--';
+        print("------------------------------------------------");
+        print(`${marker} #${matched.number} ${matched.title}`);
+        print(`state: ${matched.state}`);
+        print(`author: ${matched.user ? matched.user.login : 'unknown'}`);
+        print(`created: ${matched.created_at}`);
+        if (matched.state === 'closed' && matched.closed_at) {
+            print(`closed: ${matched.closed_at}`);
+        }
+        print("--------------------------------------------------");
+        print(matched.body || '(no description provided)');
+        print("--------------------------------------------------");
         return;
     }
 
@@ -1177,6 +1359,12 @@ const githubTool = {
     handleInput: async (input) => {
         const cleanInput = input.trim();
         if (cleanInput === '') return;
+
+        if (cleanInput.toLowerCase() === 'help') {
+            print(`github>${cleanInput}`);
+            printGithubHelp();
+            return;
+        }
 
         let action = '';
         let value = '';
