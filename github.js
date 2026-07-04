@@ -380,32 +380,32 @@ export function printGithubHelp() {
     const dynamicUserCmd = `  ${activeUsername}/github/`.padEnd(29);
 
     print("github workspace command maps:");
-    print("  github                     - switch context configuration sub-menus");
-    print("  editor                     - trigger universal plaintext file editor");
-    print("  edit/[file_name]           - fletch and open targeted items inside the workspace text editor");
-    print("  cd [dir_name]              - descend into a sub-directory node array");
-    print("  cd [file_name]             - pull and perform immediate read-only preview console blocks");
-    print("  cd .. (or ../../)          - perform relative tracking stack reversals");
-    print("  [relative_path] (ex: ../)  - quick relative tracking jumps without writing 'cd'");
-    print(`${dynamicUserCmd}- unbind the active repository, stay inside the github workspace`);
-    print("  create/[target]            - allocate new repositories, sub-directories, or code files");
-    print("  delete/[target]            - clear architectural nodes or elements with interactive safeguards");
-    print("  rename/[target]            - change resource titles or repository labels interactively");
-    print("  pull/[file_name]           - restore structural content configurations from cloud nodes");
-    print("  save/[file_name]           - serialize buffer arrays and execute remote pushes to cloud git");
-    print("  run/[file_name]            - compile and render document nodes to sub-sandbox tabs cleanly");
-    print("  fletch                     - list every repository under your github account (no repo bound)");
-    print("  fletch/[directory_name]    - parse file extensions and nested nodes inside a subdirectory");
-    print("  fletch/[file_name.exten]   - display full layout code contents of a file node instantly");
-    print("  description                - fetch the current repository description");
-    print("  edit/description           - fletch and edit the current repository description");
-    print("  issues                     - list repository issues (++ open, -- closed)");
-    print("  issues/[number or title]   - fletch full details for a specific issue");
-    print("  issues/close/[number]      - close an open issue");
-    print("  issues/reopen/[number]     - reopen a closed issue");
-    print(`  issues/comment/[number]/"msg" - post a comment on an issue`);
-    print(`  issues/fixed/[number]/"msg"   - post a comment and close the issue`);
-    print("  exit                       - leave the github workspace and return to the default prompt");
+    print("  github                         - switch context configuration sub-menus");
+    print("  editor                         - trigger universal plaintext file editor");
+    print("  edit/[file_name]               - fletch and open targeted items inside the workspace text editor");
+    print("  cd [dir_name]                  - descend into a sub-directory node array");
+    print("  cd [file_name]                 - pull and perform immediate read-only preview console blocks");
+    print("  cd .. (or ../../)              - perform relative tracking stack reversals");
+    print("  [relative_path] (ex: ../)      - quick relative tracking jumps without writing 'cd'");
+    print(`${dynamicUserCmd}    - unbind the active repository, stay inside the github workspace`);
+    print("  create/[target]                - allocate new repositories, sub-directories, or code files");
+    print("  delete/[target]                - clear architectural nodes or elements with interactive safeguards");
+    print("  rename/[target]                - change resource titles or repository labels interactively");
+    print("  pull/[file_name]               - restore structural content configurations from cloud nodes");
+    print("  save/[file_name]               - serialize buffer arrays and execute remote pushes to cloud git");
+    print("  run/[file_name]                - compile and render document nodes to sub-sandbox tabs cleanly");
+    print("  fletch                         - list every repository under your github account (no repo bound)");
+    print("  fletch/[directory_name]        - parse file extensions and nested nodes inside a subdirectory");
+    print("  fletch/[file_name.exten]       - display full layout code contents of a file node instantly");
+    print("  description                    - fetch the current repository description");
+    print("  edit/description               - fletch and edit the current repository description");
+    print("  issues                         - list repository issues (++ open, -- closed)");
+    print("  issues/[number or title]       - fletch full details for a specific issue");
+    print("  issues/close/[number]          - close an open issue");
+    print("  issues/reopen/[number]         - reopen a closed issue");
+    print(`  issues/comment/[number]/"msg"  - post a comment on an issue`);
+    print(`  issues/fixed/[number]/"msg"    - post a comment and close the issue`);
+    print("  exit                           - leave the github workspace and return to the default prompt");
 }
 
 export function hasPendingInteraction() {
