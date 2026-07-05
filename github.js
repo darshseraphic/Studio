@@ -569,7 +569,7 @@ export async function handlePendingInteraction(rawInput) {
             if (success) {
                 print(`system: cloud directory path mappings rewritten successfully.`);
             } else {
-                print(`warning: some remote directory nodes failed to migrate. local tree index adjusted regardless.`);
+                print("warning: some remote directory nodes failed to migrate. local tree index adjusted regardless.");
             }
 
             if (virtualDirectories.has(oldFullDir)) {
@@ -1052,7 +1052,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 print(`system: actual remote resource successfully pushed and created on your GitHub repository.`);
                 setMode("main", getSystemPrompt());
             } else {
-                print(`error: failed to create resource on GitHub. Verify your token has write permissions.`);
+                print("error: failed to create resource on GitHub. Verify your token has write permissions.");
             }
         }
         return;
@@ -1360,8 +1360,10 @@ const githubTool = {
         const cleanInput = input.trim();
         if (cleanInput === '') return;
 
+        const currentPrompt = getGithubConfigPrompt();
+
         if (cleanInput.toLowerCase() === 'help') {
-            print(`github>${cleanInput}`);
+            print(`${currentPrompt}${cleanInput}`);
             printGithubHelp();
             return;
         }
@@ -1414,19 +1416,19 @@ const githubTool = {
             }
 
             if (isRawToken) {
-                print(`github>login/${sanitizeInputString(maskedValue)}`);
+                print(`${currentPrompt}login/${sanitizeInputString(maskedValue)}`);
             } else {
                 if (cleanInput.toLowerCase().includes('token/')) {
-                    print(`github>login/token/${sanitizeInputString(maskedValue)}`);
+                    print(`${currentPrompt}login/token/${sanitizeInputString(maskedValue)}`);
                 } else if (cleanInput.toLowerCase().includes('token ')) {
-                    print(`github>login token ${sanitizeInputString(maskedValue)}`);
+                    print(`${currentPrompt}login token ${sanitizeInputString(maskedValue)}`);
                 } else {
                     const separator = cleanInput.includes('/') ? '/' : ' ';
-                    print(`github>login${separator}${sanitizeInputString(maskedValue)}`);
+                    print(`${currentPrompt}login${separator}${sanitizeInputString(maskedValue)}`);
                 }
             }
         } else {
-            print(`github>${sanitizeInputString(cleanInput)}`);
+            print(`${currentPrompt}${sanitizeInputString(cleanInput)}`);
         }
 
         if (action === 'exit' || action === 'back') {
@@ -1459,6 +1461,10 @@ const githubTool = {
                     if (userData && userData.login) {
                         localStorage.setItem('user', value);
                         localStorage.setItem('github_username', userData.login);
+                        
+                        // FIX: Refresh layout prompt state dynamically right here
+                        setMode('github', getGithubConfigPrompt());
+
                         print(`system: successfully authenticated as @${sanitizeInputString(userData.login)}!`);
                         print("status: you are still in configuration mode. Now bind your workspace target via: repo/name");
                     } else {
@@ -1574,8 +1580,11 @@ const githubTool = {
             savePathState();
             activeRepo = '';
             pendingRepoCreation = null;
+
+            // FIX: Keep the sub-shell prompt active, but refresh back to guest context layout
+            setMode('github', getGithubConfigPrompt());
+
             print("system: authentication tracking arrays systematically cleared.");
-            setMode("main", getSystemPrompt());
             return;
         }
 

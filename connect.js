@@ -1,12 +1,12 @@
 import './main.js';
 
 const tools = [
-    'note.js',
     'calculator.js',
     'weather.js',
     'github.js',
     'editor.js',
-    'time.js'
+    'time.js',
+    'bhagvad-geeta.js'
 ];
 
 async function loadTools() {

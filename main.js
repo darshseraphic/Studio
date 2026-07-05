@@ -182,6 +182,7 @@ if (cmdInput) {
                     print("  github                     - switch context configuration sub-menus");
                     print("  calculator                 - trigger calculation environment variables");
                     print("  weather/[location]         - query weather database forecasting reports");
+                    print("  bhagvad/geeta              - enter the Bhagavad Geeta reader (then type chapter/shlok)");
                     print("  network/ip                 - show ip address");
                     print("  network/location           - show ip location");
                     print("  network/speed              - show network speed live");
