@@ -606,7 +606,7 @@ export function isWorkspaceCommand(cleanCommand) {
     if (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`) return true;
     if (WORKSPACE_FIRST_SEGMENTS.has(firstSegment)) return true;
     if (lowerCommand === 'description') return true;
-    if (lowerCommand === 'exit') return true;
+    if (lowerCommand === 'exit' || lowerCommand === 'logout' || firstSegment === 'login') return true;
 
     return false;
 }
@@ -616,6 +616,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
     const currentUsername = (localStorage.getItem('github_username') || 'guest').toLowerCase();
     const firstSegment = lowerCommand.split('/')[0];
     const isRootReset = (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`);
+    const activeRepoName = localStorage.getItem('repository');
 
     // Validate deep directory command overrides
     if (currentPath.length > 0) {
@@ -623,8 +624,12 @@ export async function handleWorkspaceCommand(cleanCommand) {
             print(`You are inside a deep directory, do ${currentUsername}/ to use those commands`);
             return;
         }
+    }
+
+    // Capture specific overrides when inside an active repository or deep working directory
+    if (activeRepoName || currentPath.length > 0) {
         if (lowerCommand === 'exit' || lowerCommand === 'logout' || lowerCommand === 'login/token' || lowerCommand.startsWith('login/token/') || lowerCommand.startsWith('login/token ')) {
-            print(`came back to the main directory to use those command or try ${currentUsername}/`);
+            print(`error: command such as exit, logout and login/token will not work inside the working directory. Do ${currentUsername}/ to use those commands`);
             return;
         }
     }
@@ -643,7 +648,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
     }
 
     if (lowerCommand === 'exit') {
-        const activeRepoName = localStorage.getItem('repository');
         if (!activeRepoName && currentPath.length === 0 && !isInGithubContext()) {
             print("system: no active github workspace context to exit.");
             setMode("main", getSystemPrompt());
@@ -722,7 +726,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
             return;
         }
 
-        const activeRepoName = localStorage.getItem('repository');
         if (!activeRepoName) {
             print(`system: scanning GitHub for repository configuration: '${pathTarget}'...`);
             const repoExists = await verifyRemotePath(pathTarget, '');
@@ -764,8 +767,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
     }
 
     if (firstSegment === 'fletch') {
-        const activeRepoName = localStorage.getItem('repository');
-
         if (!activeRepoName) {
             print("system: fletching all repositories bound to your github account...");
             const repos = await fetchUserRepos();
@@ -839,7 +840,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
     }
 
     if (firstSegment === 'issues') {
-        const activeRepoName = localStorage.getItem('repository');
         if (!activeRepoName) {
             print("error: no active repository detected.");
             return;
@@ -996,7 +996,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
             return;
         }
 
-        const activeRepoName = localStorage.getItem('repository');
         const token = localStorage.getItem('user');
         const username = localStorage.getItem('github_username');
 
@@ -1077,7 +1076,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
             print("error: specify valid target resource configurations to delete, e.g. delete/index.html");
             return;
         }
-        const activeRepoName = localStorage.getItem('repository');
         if (!activeRepoName) {
             pendingDeleteType = "repository";
         } else {
@@ -1098,7 +1096,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
             print("error: specify a valid target resource to rename, e.g. rename/index.html or rename/old-repo-name");
             return;
         }
-        const activeRepoName = localStorage.getItem('repository');
         if (!activeRepoName) {
             pendingRenameType = "repository";
         } else {
@@ -1132,8 +1129,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
             print("error: specify path name parameter, e.g. edit/note.txt");
             return;
         }
-
-        const activeRepoName = localStorage.getItem('repository');
 
         if (targetPayload === 'description') {
             if (!activeRepoName) {
@@ -1201,7 +1196,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
             return;
         }
         if (targetPayload === 'description') {
-            const activeRepoName = localStorage.getItem('repository');
             if (!activeRepoName) {
                 print("error: no active repository detected.");
                 return;
@@ -1316,7 +1310,6 @@ export async function handleWorkspaceCommand(cleanCommand) {
     }
 
     if (lowerCommand === 'description') {
-        const activeRepoName = localStorage.getItem('repository');
         if (!activeRepoName) {
             print("error: no active repository detected.");
         } else {
@@ -1377,6 +1370,7 @@ const githubTool = {
 
         const currentPrompt = getGithubConfigPrompt();
         const lowerInput = cleanInput.toLowerCase();
+        const activeRepoName = localStorage.getItem('repository');
 
         // Validate deep directory command overrides
         if (currentPath.length > 0) {
@@ -1385,9 +1379,13 @@ const githubTool = {
                 print(`You are inside a deep directory, do ${username}/ to use those commands`);
                 return;
             }
+        }
+
+        // Capture specific overrides when inside an active repository or deep working directory
+        if (activeRepoName || currentPath.length > 0) {
             if (lowerInput === 'exit' || lowerInput === 'logout' || lowerInput.startsWith('login/token')) {
                 const username = localStorage.getItem('github_username') || 'guest';
-                print(`came back to the main directory to use those command or try ${username}/`);
+                print(`error: command such as exit, logout and login/token will not work inside the working directory. Do ${username}/ to use those commands`);
                 return;
             }
         }
