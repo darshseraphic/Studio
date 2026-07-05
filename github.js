@@ -368,7 +368,9 @@ async function verifyRemotePath(repoName, directoryPath = '') {
 
 function getGithubConfigPrompt() {
     const username = localStorage.getItem('github_username') || 'guest';
-    return `${username}/github>`;
+    const repo = localStorage.getItem('repository') || '';
+    const deepPath = currentPath && currentPath.length > 0 ? '/' + currentPath.join('/') : '';
+    return `${username}/github${repo ? '/' + repo : ''}${deepPath}>`;
 }
 
 export function isInGithubContext() {
@@ -614,6 +616,18 @@ export async function handleWorkspaceCommand(cleanCommand) {
     const currentUsername = (localStorage.getItem('github_username') || 'guest').toLowerCase();
     const firstSegment = lowerCommand.split('/')[0];
     const isRootReset = (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`);
+
+    // Validate deep directory command overrides
+    if (currentPath.length > 0) {
+        if (firstSegment === 'github') {
+            print(`You are inside a deep directory, do ${currentUsername}/ to use those commands`);
+            return;
+        }
+        if (lowerCommand === 'exit' || lowerCommand === 'logout' || lowerCommand === 'login/token' || lowerCommand.startsWith('login/token/') || lowerCommand.startsWith('login/token ')) {
+            print(`came back to the main directory to use those command or try ${currentUsername}/`);
+            return;
+        }
+    }
 
     if (firstSegment !== 'github' && lowerCommand !== 'exit' && lowerCommand !== 'editor' && !isRootReset && !isInGithubContext()) {
         print("error: you're not inside the github workspace yet. type 'github' to configure access first.");
@@ -1330,7 +1344,9 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
 const githubTool = {
     helpText: "configure terminal verification credentials. subcommands: login/token, repo/name, confirm, logout, exit",
-    prompt: "github>",
+    get prompt() {
+        return getGithubConfigPrompt();
+    },
     sync: pushFileToGitHub,
     pull: pullFileFromGitHub,
     tree: fetchRepoTree,
@@ -1338,7 +1354,6 @@ const githubTool = {
 
     onEnter: async () => {
         localStorage.setItem('github_active', 'true');
-        print("system: github configuration subsystem activated.");
         const token = localStorage.getItem('user');
         const username = localStorage.getItem('github_username');
         const repo = localStorage.getItem('repository');
@@ -1348,7 +1363,7 @@ const githubTool = {
             if (repo) {
                 print(`active structural tracking repo context: ${sanitizeInputString(repo)}`);
             } else {
-                print("active workspace repo: none contextually bound (use 'repo/name', or exit and 'fletch' to list repos)");
+                print("active workspace repo: none contextually bound (use 'repo/name', or exit and 'fletch' to list repos. Help for library)");
             }
         } else {
             print("status: unauthenticated. authorize workspace by generating a personal access token and entering: login/token");
@@ -1361,7 +1376,22 @@ const githubTool = {
         if (cleanInput === '') return;
 
         const currentPrompt = getGithubConfigPrompt();
+        const lowerInput = cleanInput.toLowerCase();
 
+        // Validate deep directory command overrides
+        if (currentPath.length > 0) {
+            if (lowerInput === 'github' || lowerInput.startsWith('github/') || lowerInput.startsWith('github ')) {
+                const username = localStorage.getItem('github_username') || 'guest';
+                print(`You are inside a deep directory, do ${username}/ to use those commands`);
+                return;
+            }
+            if (lowerInput === 'exit' || lowerInput === 'logout' || lowerInput.startsWith('login/token')) {
+                const username = localStorage.getItem('github_username') || 'guest';
+                print(`came back to the main directory to use those command or try ${username}/`);
+                return;
+            }
+        }
+        
         if (cleanInput.toLowerCase() === 'help') {
             print(`${currentPrompt}${cleanInput}`);
             printGithubHelp();
@@ -1462,7 +1492,6 @@ const githubTool = {
                         localStorage.setItem('user', value);
                         localStorage.setItem('github_username', userData.login);
                         
-                        // FIX: Refresh layout prompt state dynamically right here
                         setMode('github', getGithubConfigPrompt());
 
                         print(`system: successfully authenticated as @${sanitizeInputString(userData.login)}!`);
@@ -1581,7 +1610,6 @@ const githubTool = {
             activeRepo = '';
             pendingRepoCreation = null;
 
-            // FIX: Keep the sub-shell prompt active, but refresh back to guest context layout
             setMode('github', getGithubConfigPrompt());
 
             print("system: authentication tracking arrays systematically cleared.");
