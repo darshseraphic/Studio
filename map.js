@@ -3,19 +3,37 @@ import { registerTool, print } from './main.js';
 let openedWindow = null;
 
 const mapTool = {
-    helpText: "open an interactive map centered on a location (use: map/[location])",
+    helpText: "open an interactive map centered on a location (use: map/[location] or map/road/[location])",
     prompt: "map>",
     onEnter: async () => {
-        print("system: map mode activated. type a location name or map/[location]. press CTRL + E to exit.");
+        print("system: map mode activated. type a location name or map/[location] (or road/[location]). press CTRL + E to exit.");
     },
     handleInput: async (input) => {
         print(`map>${input}`);
         
-        let locationName = input.trim();
-        if (locationName === '') return;
+        let cleanInput = input.trim();
+        if (cleanInput === '') return;
 
-        if (locationName.toLowerCase().startsWith('map/')) {
-            locationName = locationName.substring(4).trim();
+        // Strip prefix if invoked globally from the main terminal context
+        if (cleanInput.toLowerCase().startsWith('map/')) {
+            cleanInput = cleanInput.substring(4).trim();
+        }
+
+        if (cleanInput === '') {
+            print("error: please specify a valid location.");
+            return;
+        }
+
+        // Route to city-roads sub-command or standard map view
+        let isRoadMode = false;
+        let locationName = cleanInput;
+
+        if (locationName.toLowerCase().startsWith('road/')) {
+            isRoadMode = true;
+            locationName = locationName.substring(5).trim();
+        } else if (locationName.toLowerCase().startsWith('road ')) {
+            isRoadMode = true;
+            locationName = locationName.substring(5).trim();
         }
 
         if (locationName === '') {
@@ -23,6 +41,47 @@ const mapTool = {
             return;
         }
 
+        // --- Handle City Roads Sub-Command ---
+        if (isRoadMode) {
+            print(`system: generating city roads visualization workspace for "${locationName}"...`);
+            
+            if (openedWindow && !openedWindow.closed) {
+                openedWindow.close();
+            }
+
+            const targetUrl = `https://anvaka.github.io/city-roads/?q=${encodeURIComponent(locationName)}`;
+            
+            const roadHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>City Roads - ${locationName.replace(/"/g, '&quot;')}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+        iframe { width: 100%; height: 100%; border: none; }
+    </style>
+</head>
+<body>
+    <iframe src="${targetUrl}"></iframe>
+    <script>
+        window.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key.toLowerCase() === 'e') {
+                e.preventDefault();
+                window.close();
+            }
+        });
+    </script>
+</body>
+</html>`;
+
+            const blob = new Blob([roadHtml], { type: 'text/html' });
+            const viewerUrl = URL.createObjectURL(blob);
+            openedWindow = window.open(viewerUrl, '_blank');
+            return;
+        }
+
+        // --- Handle Standard Map Mode ---
         print(`system: locating geocoding coordinates for "${locationName}"...`);
 
         try {
