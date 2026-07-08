@@ -1,5 +1,7 @@
 import { registerTool, print } from './main.js';
 
+let openedWindow = null;
+
 const mapTool = {
     helpText: "open an interactive map centered on a location (use: map/[location])",
     prompt: "map>",
@@ -50,6 +52,10 @@ const mapTool = {
 
             print("system: generating map viewport instance and launching workspace tab...");
 
+            if (openedWindow && !openedWindow.closed) {
+                openedWindow.close();
+            }
+
             const mapHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -80,19 +86,29 @@ const mapTool = {
         new maplibregl.Marker({ element: container.firstElementChild })
             .setLngLat([${lon}, ${lat}])
             .addTo(map);
+
+        window.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key.toLowerCase() === 'e') {
+                e.preventDefault();
+                window.close();
+            }
+        });
     </script>
 </body>
 </html>`;
 
             const blob = new Blob([mapHtml], { type: 'text/html' });
             const viewerUrl = URL.createObjectURL(blob);
-            window.open(viewerUrl, '_blank');
+            openedWindow = window.open(viewerUrl, '_blank');
 
         } catch (err) {
             print("error: failed to securely communicate with the geocoding service framework.");
         }
     },
     onExit: () => {
+        if (openedWindow && !openedWindow.closed) {
+            openedWindow.close();
+        }
         print("system: exited map engine console interface layout.");
     }
 };
