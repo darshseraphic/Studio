@@ -1,6 +1,21 @@
-import { registerTool, print } from './main.js';
+import { registerTool, print, setMode, getSystemPrompt } from './main.js';
 
 let openedWindow = null;
+
+window.addEventListener('message', (e) => {
+    if (e.data === 'close-map-environment') {
+        if (openedWindow && !openedWindow.closed) {
+            openedWindow.close();
+        }
+        print("system: closing active tool environment session [map].");
+        setMode("main", getSystemPrompt());
+        const cmdInput = document.getElementById('cmd-input');
+        if (cmdInput) {
+            cmdInput.value = '';
+            cmdInput.style.height = '26px';
+        }
+    }
+});
 
 const mapTool = {
     helpText: "open an interactive map centered on a location (use: map/[location] or map/road/[location])",
@@ -14,7 +29,6 @@ const mapTool = {
         let cleanInput = input.trim();
         if (cleanInput === '') return;
 
-        // Strip prefix if invoked globally from the main terminal context
         if (cleanInput.toLowerCase().startsWith('map/')) {
             cleanInput = cleanInput.substring(4).trim();
         }
@@ -24,7 +38,6 @@ const mapTool = {
             return;
         }
 
-        // Route to city-roads sub-command or standard map view
         let isRoadMode = false;
         let locationName = cleanInput;
 
@@ -41,7 +54,6 @@ const mapTool = {
             return;
         }
 
-        // --- Handle City Roads Sub-Command ---
         if (isRoadMode) {
             print(`system: generating city roads visualization workspace for "${locationName}"...`);
             
@@ -68,7 +80,11 @@ const mapTool = {
         window.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key.toLowerCase() === 'e') {
                 e.preventDefault();
-                window.close();
+                if (window.opener) {
+                    window.opener.postMessage('close-map-environment', '*');
+                } else {
+                    window.close();
+                }
             }
         });
     </script>
@@ -81,7 +97,6 @@ const mapTool = {
             return;
         }
 
-        // --- Handle Standard Map Mode ---
         print(`system: locating geocoding coordinates for "${locationName}"...`);
 
         try {
@@ -149,7 +164,11 @@ const mapTool = {
         window.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key.toLowerCase() === 'e') {
                 e.preventDefault();
-                window.close();
+                if (window.opener) {
+                    window.opener.postMessage('close-map-environment', '*');
+                } else {
+                    window.close();
+                }
             }
         });
     </script>

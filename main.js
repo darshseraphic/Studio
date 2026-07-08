@@ -205,6 +205,7 @@ if (cmdInput) {
                     print("  network/location           - show ip location");
                     print("  network/speed              - show network speed live");
                     print("  map/[location]             - open an interactive map centered on a location");
+                    print("  map/road/[location]        - open an interactive map that show only road");                    
                     print("  open [url] (or open/[url]) - open target URL link inside a new browser tab cleanly");
                 }
             } else if (lowerCommand === 'clear') {
