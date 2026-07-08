@@ -192,6 +192,8 @@ if (cmdInput) {
                     print("  github                     - switch context configuration sub-menus");
                     print("  calculator                 - trigger calculation environment variables");
                     print("  weather/[location]         - query weather database forecasting reports");
+                    print("  cat/random                 - get random facts about cat");
+                    print("  cat/breeds                 - query specific cat breeds lists");
                     print("  bhagvad/geeta              - enter the Bhagavad Geeta reader (then type chapter/shlok)");
                     print("  bible                      - enter the Bible reader (then type book/chapter:verse)");
                     print("  network/ip                 - show ip address");
@@ -227,7 +229,7 @@ if (cmdInput) {
             } else if (GitHub.isWorkspaceCommand(cleanCommand)) {
                 await GitHub.handleWorkspaceCommand(cleanCommand);
             } else if (registry[firstSegment]) {
-                if ((firstSegment === 'weather' || firstSegment === 'network') && cleanCommand.includes('/')) {
+                if ((firstSegment === 'weather' || firstSegment === 'network' || firstSegment === 'cat') && cleanCommand.includes('/')) {
                     await registry[firstSegment].handleInput(cleanCommand);
                     return;
                 }

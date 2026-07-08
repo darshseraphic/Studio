@@ -7,7 +7,8 @@ const tools = [
     'editor.js',
     'time.js',
     'bhagvad-geeta.js',
-    'bible.js'
+    'bible.js',
+    'cat.js'
 ];
 
 async function loadTools() {
