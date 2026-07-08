@@ -40,7 +40,8 @@ export async function fetchRepoTree(repoName, subDirectoryPath = '') {
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
                 'Accept': 'application/vnd.github+json'
-            }
+            },
+            cache: 'no-store'
         });
 
         if (!res.ok) {
@@ -81,7 +82,8 @@ export async function fetchUserRepos() {
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
                 'Accept': 'application/vnd.github+json'
-            }
+            },
+            cache: 'no-store'
         });
 
         if (!res.ok) {
@@ -133,7 +135,8 @@ export async function pushFileToGitHub(filePath, content, commitMessage = null) 
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
                 'Accept': 'application/vnd.github+json'
-            }
+            },
+            cache: 'no-store'
         });
 
         if (fileCheck.ok) {
@@ -191,7 +194,8 @@ export async function pullFileFromGitHub(filePath) {
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
                 'Accept': 'application/vnd.github+json'
-            }
+            },
+            cache: 'no-store'
         });
 
         if (!res.ok) return null;
@@ -232,7 +236,8 @@ export async function deletePathFromGitHub(filePath) {
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
                 'Accept': 'application/vnd.github+json'
-            }
+            },
+            cache: 'no-store'
         });
 
         if (!res.ok) {
@@ -313,7 +318,8 @@ async function fetchRepoIssues(repoName, state = 'all') {
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Accept': 'application/vnd.github+json'
-            }
+            },
+            cache: 'no-store'
         });
 
         if (!res.ok) return null;
@@ -358,7 +364,8 @@ async function verifyRemotePath(repoName, directoryPath = '') {
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Accept': 'application/vnd.github+json'
-            }
+            },
+            cache: 'no-store'
         });
         return res.ok;
     } catch (e) {
@@ -501,8 +508,7 @@ export async function handlePendingInteraction(rawInput) {
                             'Authorization': `Bearer ${token}`,
                             'Content-Type': 'application/json',
                             'Accept': 'application/vnd.github+json'
-                        },
-                        body: JSON.stringify({ name: newName })
+                        }
                     });
 
                     if (patchRes.ok) {
@@ -886,8 +892,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json',
                         'Accept': 'application/vnd.github+json'
-                    },
-                    body: JSON.stringify({ state: newState })
+                    }
                 });
                 if (res.ok) {
                     print(`system: issue ${issueNumber} successfully ${subAction === 'close' ? 'closed' : 'reopened'}.`);
@@ -1140,7 +1145,8 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const username = localStorage.getItem('github_username');
             try {
                 const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
-                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
+                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
+                    cache: 'no-store'
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -1317,7 +1323,8 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const username = localStorage.getItem('github_username');
             try {
                 const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
-                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
+                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
+                    cache: 'no-store'
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -1481,7 +1488,8 @@ const githubTool = {
                     headers: {
                         'Authorization': `Bearer ${value}`,
                         'Accept': 'application/vnd.github+json'
-                    }
+                    },
+                    cache: 'no-store'
                 });
 
                 if (res.ok) {
@@ -1530,7 +1538,8 @@ const githubTool = {
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Accept': 'application/vnd.github+json'
-                    }
+                    },
+                    cache: 'no-store'
                 });
 
                 if (checkRes.ok) {
