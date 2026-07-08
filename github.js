@@ -386,7 +386,7 @@ export function isInGithubContext() {
 
 export function printGithubHelp() {
     const activeUsername = localStorage.getItem('github_username') || 'guest';
-    const dynamicUserCmd = `  ${activeUsername}/github/`.padEnd(29);
+    const dynamicUserCmd = `  ${activeUsername}/`.padEnd(29);
 
     print("github workspace command maps:");
     print("  github                         - switch context configuration sub-menus");

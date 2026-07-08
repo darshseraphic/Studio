@@ -162,7 +162,12 @@ if (cmdInput) {
 
             if (currentMode !== "main") {
                 if (registry[currentMode] && typeof registry[currentMode].handleInput === 'function') {
+                    const checkGithubExit = (currentMode === 'github' && rawInput.trim().toLowerCase() === 'exit');
                     await registry[currentMode].handleInput(rawInput);
+                    if (checkGithubExit) {
+                        const GitHub = await import('./github.js');
+                        await GitHub.handleWorkspaceCommand('exit');
+                    }
                     return;
                 }
             }
