@@ -204,6 +204,7 @@ if (cmdInput) {
                     print("  network/ip                 - show ip address");
                     print("  network/location           - show ip location");
                     print("  network/speed              - show network speed live");
+                    print("  map/[location]             - open an interactive map centered on a location");
                     print("  open [url] (or open/[url]) - open target URL link inside a new browser tab cleanly");
                 }
             } else if (lowerCommand === 'clear') {
@@ -234,7 +235,7 @@ if (cmdInput) {
             } else if (GitHub.isWorkspaceCommand(cleanCommand)) {
                 await GitHub.handleWorkspaceCommand(cleanCommand);
             } else if (registry[firstSegment]) {
-                if ((firstSegment === 'weather' || firstSegment === 'network' || firstSegment === 'cat') && cleanCommand.includes('/')) {
+                if ((firstSegment === 'weather' || firstSegment === 'network' || firstSegment === 'cat' || firstSegment === 'map') && cleanCommand.includes('/')) {
                     await registry[firstSegment].handleInput(cleanCommand);
                     return;
                 }
