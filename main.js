@@ -10,7 +10,7 @@ export const VALID_EXTENSIONS = [
     'py', 'rb', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'php', 'sh', 'dart'
 ];
 
-export let currentMode = "main";
+export let currentMode = localStorage.getItem('terminal_mode') || "main";
 export let currentPath = JSON.parse(localStorage.getItem('current_path') || '[]');
 export let fileBuffers = {};
 export let virtualDirectories = new Set();
@@ -45,7 +45,7 @@ export function getSystemPrompt() {
 }
 
 if (promptSpan) {
-    promptSpan.textContent = getSystemPrompt();
+    promptSpan.textContent = localStorage.getItem('terminal_prompt') || getSystemPrompt();
 }
 
 export function print(text) {
@@ -64,8 +64,18 @@ export function registerTool(name, toolModule) {
 
 export function setMode(modeName, promptText = "") {
     currentMode = modeName;
+    const targetPrompt = promptText || getSystemPrompt();
+    
+    if (modeName === "main") {
+        localStorage.removeItem('terminal_mode');
+        localStorage.removeItem('terminal_prompt');
+    } else {
+        localStorage.setItem('terminal_mode', modeName);
+        localStorage.setItem('terminal_prompt', targetPrompt);
+    }
+
     if (promptSpan) {
-        promptSpan.textContent = promptText || getSystemPrompt();
+        promptSpan.textContent = targetPrompt;
     }
 }
 
