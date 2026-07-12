@@ -11,6 +11,7 @@ let pendingDeleteTarget = "";
 let pendingDeleteType = "";
 let pendingRenameTarget = "";
 let pendingRenameType = "";
+let pendingVisibilityChange = "";
 
 const REPO_NAME_REGEX = /^[a-zA-Z0-9._-]+$/;
 const SAFE_FILE_NAME_REGEX = /^[a-zA-Z0-9._\\-\\/]+$/;
@@ -417,8 +418,21 @@ export function printGithubHelp() {
     print("  exit                           - leave the github workspace and return to the default prompt");
 }
 
+export function printSettingsHelp() {
+    print("repository settings command maps:");
+    print("  settings/help                          - show this settings command list");
+    print("  settings/branch/[branchName]           - change the repository's default branch");
+    print("  settings/issues/all                    - remove interaction restrictions, issues open to all users");
+    print("  settings/issues/collaborative           - restrict issue interactions to collaborators only");
+    print("  settings/sponsorships                  - toggle the sponsor button on or off");
+    print("  settings/discussions                   - toggle discussions on or off");
+    print("  settings/projects                      - toggle projects on or off");
+    print("  settings/visibility/public              - make the repository public (confirmation required)");
+    print("  settings/visibility/private              - make the repository private (confirmation required)");
+}
+
 export function hasPendingInteraction() {
-    return !!(pendingDeleteTarget || pendingRenameTarget);
+    return !!(pendingDeleteTarget || pendingRenameTarget || pendingVisibilityChange);
 }
 
 export async function handlePendingInteraction(rawInput) {
@@ -596,9 +610,53 @@ export async function handlePendingInteraction(rawInput) {
         setMode("main", getSystemPrompt());
         return;
     }
+
+    if (pendingVisibilityChange) {
+        print(`> ${rawInput}`);
+        const lowerInput = rawInput.trim().toLowerCase();
+
+        if (lowerInput === 'yes' || lowerInput === 'y') {
+            const token = localStorage.getItem('user');
+            const username = localStorage.getItem('github_username');
+            const activeRepoName = localStorage.getItem('repository');
+            const newVisibility = pendingVisibilityChange;
+
+            print(`system: updating repository visibility to '${newVisibility}'...`);
+            try {
+                const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/vnd.github+json'
+                    },
+                    body: JSON.stringify({ private: newVisibility === 'private' })
+                });
+
+                if (res.ok) {
+                    print(`system: repository visibility successfully changed to ${newVisibility}.`);
+                } else {
+                    const errData = await res.json().catch(() => ({}));
+                    print(`error: failed to change visibility. GitHub status ${res.status}: ${errData.message || 'unknown administrative constraint'}`);
+                }
+            } catch (e) {
+                print(`error: unexpected transmission pipeline failure: ${e.message}`);
+            }
+
+            pendingVisibilityChange = "";
+            setMode("main", getSystemPrompt());
+        } else if (lowerInput === 'no' || lowerInput === 'n') {
+            print("system: visibility change canceled.");
+            pendingVisibilityChange = "";
+            setMode("main", getSystemPrompt());
+        } else {
+            print(`Are you sure? [Yes] or [No]?`);
+        }
+        return;
+    }
 }
 
-const WORKSPACE_FIRST_SEGMENTS = new Set(['create', 'delete', 'rename', 'pull', 'save', 'run', 'fletch', 'issues']);
+const WORKSPACE_FIRST_SEGMENTS = new Set(['create', 'delete', 'rename', 'pull', 'save', 'run', 'fletch', 'issues', 'settings']);
 
 export function isWorkspaceCommand(cleanCommand) {
     const lowerCommand = cleanCommand.toLowerCase();
@@ -1336,6 +1394,244 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 print("error: network error fetching description.");
             }
         }
+        return;
+    }
+
+    if (firstSegment === 'settings') {
+        if (!activeRepoName) {
+            print("error: no active repository detected. settings require a bound repository context.");
+            return;
+        }
+
+        const settingsParts = targetPayload.split('/');
+        const settingsAction = (settingsParts[0] || '').toLowerCase();
+        const token = localStorage.getItem('user');
+        const username = localStorage.getItem('github_username');
+        const repoApiBase = `https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}`;
+
+        if (!settingsAction || settingsAction === 'help') {
+            printSettingsHelp();
+            return;
+        }
+
+        if (settingsAction === 'branch') {
+            const branchName = settingsParts.slice(1).join('/').trim();
+            if (!branchName) {
+                print("error: specify a branch name, e.g. settings/branch/main");
+                return;
+            }
+
+            print(`system: updating default branch to '${sanitizeInputString(branchName)}'...`);
+            try {
+                const res = await fetch(repoApiBase, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/vnd.github+json'
+                    },
+                    body: JSON.stringify({ default_branch: branchName })
+                });
+
+                if (res.ok) {
+                    print(`system: default branch successfully changed to '${sanitizeInputString(branchName)}'.`);
+                } else {
+                    const errData = await res.json().catch(() => ({}));
+                    print(`error: failed to change default branch. GitHub status ${res.status}: ${errData.message || 'the branch may not exist on the remote.'}`);
+                }
+            } catch (e) {
+                print(`error: network error updating default branch: ${e.message}`);
+            }
+            return;
+        }
+
+        if (settingsAction === 'issues') {
+            const issueMode = (settingsParts[1] || '').toLowerCase();
+            if (issueMode !== 'all' && issueMode !== 'collaborative') {
+                print("error: specify settings/issues/all or settings/issues/collaborative");
+                return;
+            }
+
+            if (issueMode === 'all') {
+                print("system: removing interaction restrictions, issues open to all users...");
+                try {
+                    const res = await fetch(`${repoApiBase}/interaction-limits`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Accept': 'application/vnd.github+json'
+                        }
+                    });
+                    if (res.ok || res.status === 204) {
+                        print("system: interaction restrictions removed. issues are open to all users.");
+                    } else {
+                        print(`error: failed to remove interaction restrictions. GitHub status ${res.status}.`);
+                    }
+                } catch (e) {
+                    print(`error: network error updating interaction limits: ${e.message}`);
+                }
+            } else {
+                print("system: restricting issue interactions to collaborators only...");
+                try {
+                    const res = await fetch(`${repoApiBase}/interaction-limits`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/vnd.github+json'
+                        },
+                        body: JSON.stringify({ limit: 'collaborators_only', expiry: 'six_months' })
+                    });
+                    if (res.ok) {
+                        print("system: issue interactions restricted to collaborators only (limit active for six months).");
+                    } else {
+                        print(`error: failed to set interaction restriction. GitHub status ${res.status}.`);
+                    }
+                } catch (e) {
+                    print(`error: network error updating interaction limits: ${e.message}`);
+                }
+            }
+            return;
+        }
+
+        if (settingsAction === 'sponsorships') {
+            const fundingPath = '.github/FUNDING.yml';
+            print("system: checking current sponsorship funding configuration...");
+            try {
+                const checkRes = await fetch(`${repoApiBase}/contents/${fundingPath}`, {
+                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
+                    cache: 'no-store'
+                });
+
+                if (checkRes.ok) {
+                    const fileData = await checkRes.json();
+                    print("system: removing sponsorship funding file, disabling sponsor button...");
+                    const deleteRes = await fetch(`${repoApiBase}/contents/${fundingPath}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/vnd.github+json'
+                        },
+                        body: JSON.stringify({ message: 'Disable sponsorships', sha: fileData.sha })
+                    });
+                    if (deleteRes.ok) {
+                        print("system: sponsorships disabled successfully.");
+                    } else {
+                        print(`error: failed to disable sponsorships. GitHub status ${deleteRes.status}.`);
+                    }
+                } else if (checkRes.status === 404) {
+                    print("system: creating sponsorship funding file, enabling sponsor button...");
+                    const content = `github: ${username}\n`;
+                    const uint8Array = new TextEncoder().encode(content);
+                    let binaryString = '';
+                    for (let i = 0; i < uint8Array.length; i++) {
+                        binaryString += String.fromCharCode(uint8Array[i]);
+                    }
+                    const base64Content = btoa(binaryString);
+                    const createRes = await fetch(`${repoApiBase}/contents/${fundingPath}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/vnd.github+json'
+                        },
+                        body: JSON.stringify({ message: 'Enable sponsorships', content: base64Content })
+                    });
+                    if (createRes.ok) {
+                        print(`system: sponsorships enabled successfully, funding directed to @${sanitizeInputString(username)}.`);
+                    } else {
+                        print(`error: failed to enable sponsorships. GitHub status ${createRes.status}.`);
+                    }
+                } else {
+                    print(`error: failed to check sponsorship configuration. GitHub status ${checkRes.status}.`);
+                }
+            } catch (e) {
+                print(`error: network error toggling sponsorships: ${e.message}`);
+            }
+            return;
+        }
+
+        if (settingsAction === 'discussions' || settingsAction === 'projects') {
+            const fieldName = settingsAction === 'discussions' ? 'has_discussions' : 'has_projects';
+            print(`system: checking current ${settingsAction} configuration...`);
+            try {
+                const checkRes = await fetch(repoApiBase, {
+                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
+                    cache: 'no-store'
+                });
+                if (!checkRes.ok) {
+                    print(`error: failed to fetch current repository configuration. GitHub status ${checkRes.status}.`);
+                    return;
+                }
+                const repoData = await checkRes.json();
+                const currentState = !!repoData[fieldName];
+                const newState = !currentState;
+
+                print(`system: ${newState ? 'enabling' : 'disabling'} ${settingsAction}...`);
+                const patchRes = await fetch(repoApiBase, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/vnd.github+json'
+                    },
+                    body: JSON.stringify({ [fieldName]: newState })
+                });
+                if (patchRes.ok) {
+                    print(`system: ${settingsAction} successfully ${newState ? 'enabled' : 'disabled'}.`);
+                } else {
+                    print(`error: failed to update ${settingsAction}. GitHub status ${patchRes.status}.`);
+                }
+            } catch (e) {
+                print(`error: network error updating ${settingsAction}: ${e.message}`);
+            }
+            return;
+        }
+
+        if (settingsAction === 'visibility') {
+            const targetVisibility = (settingsParts[1] || '').toLowerCase();
+            if (targetVisibility !== 'public' && targetVisibility !== 'private') {
+                print("error: specify settings/visibility/public or settings/visibility/private");
+                return;
+            }
+
+            print("system: checking current visibility state...");
+            try {
+                const checkRes = await fetch(repoApiBase, {
+                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
+                    cache: 'no-store'
+                });
+                if (!checkRes.ok) {
+                    print(`error: failed to fetch current repository configuration. GitHub status ${checkRes.status}.`);
+                    return;
+                }
+                const repoData = await checkRes.json();
+                const isCurrentlyPrivate = !!repoData.private;
+
+                if (targetVisibility === 'public' && !isCurrentlyPrivate) {
+                    print("system: repository is already public.");
+                    return;
+                }
+                if (targetVisibility === 'private' && isCurrentlyPrivate) {
+                    print("system: repository is already private.");
+                    return;
+                }
+
+                pendingVisibilityChange = targetVisibility;
+                if (targetVisibility === 'public') {
+                    print("warning: this will make the repository PUBLIC. it is currently private.");
+                } else {
+                    print("warning: this will make the repository PRIVATE. it is currently public.");
+                }
+                print("Are you sure? [Yes] or [No]?");
+            } catch (e) {
+                print(`error: network error checking visibility state: ${e.message}`);
+            }
+            return;
+        }
+
+        print(`error: unrecognized settings command "${sanitizeInputString(targetPayload)}". type settings/help for available commands.`);
         return;
     }
 
