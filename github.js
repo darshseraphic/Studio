@@ -754,7 +754,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
     const isRootReset = (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`);
     const activeRepoName = localStorage.getItem('repository');
 
-    // Validate deep directory command overrides
+    
     if (currentPath.length > 0) {
         if (firstSegment === 'github') {
             print(`You are inside a deep directory, do ${currentUsername}/ to use those commands`);
@@ -762,7 +762,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
         }
     }
 
-    // Capture specific overrides when inside an active repository or deep working directory
+    
     if (activeRepoName || currentPath.length > 0) {
         if (lowerCommand === 'exit' || lowerCommand === 'logout' || lowerCommand === 'login/token' || lowerCommand.startsWith('login/token/') || lowerCommand.startsWith('login/token ')) {
             print(`error: command such as exit, logout and login/token will not work inside the working directory. Do ${currentUsername}/ to use those commands`);
@@ -1755,7 +1755,7 @@ const githubTool = {
         const lowerInput = cleanInput.toLowerCase();
         const activeRepoName = localStorage.getItem('repository');
 
-        // Validate deep directory command overrides
+        
         if (currentPath.length > 0) {
             if (lowerInput === 'github' || lowerInput.startsWith('github/') || lowerInput.startsWith('github ')) {
                 const username = localStorage.getItem('github_username') || 'guest';
@@ -1764,7 +1764,7 @@ const githubTool = {
             }
         }
 
-        // Capture specific overrides when inside an active repository or deep working directory
+        
         if (activeRepoName || currentPath.length > 0) {
             if (lowerInput === 'exit' || lowerInput === 'logout' || lowerInput.startsWith('login/token')) {
                 const username = localStorage.getItem('github_username') || 'guest';
