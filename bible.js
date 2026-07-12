@@ -42,7 +42,6 @@ const bibleTool = {
             return;
         }
 
-        // Parse format: book/chapter:verse (e.g., john/3:16 or 1 corinthians/13:1)
         const parts = cleanInput.split('/');
         if (parts.length !== 2) {
             print("error: invalid format. please use book/chapter:verse, e.g. john/3:16");
@@ -62,8 +61,6 @@ const bibleTool = {
         const verse = subParts[1].trim();
 
         print(`system: fetching ${book} chapter ${chapter}, verse ${verse}...`);
-
-        // Build URL matching bible-api.com architecture
         const encodedBook = encodeURIComponent(book);
         const directUrl = `https://bible-api.com/${encodedBook}+${chapter}:${verse}`;
         let data = null;
@@ -85,7 +82,6 @@ const bibleTool = {
             return;
         }
 
-        // Standard Block Wrap Engine: Used for text formatting and alignment
         const cleanWrap = (text, maxChars = 70, indent = "      ") => {
             if (!text) return "";
             return text
@@ -112,14 +108,12 @@ const bibleTool = {
                 .join('\n' + indent);
         };
 
-        // Output Layout Framework
         print("");
         print("================================================================================");
         print(`  REFERENCE: ${data.reference.toUpperCase()}`);
         print("================================================================================");
         print("");
 
-        // Content Section (Displays clean wrapped text while ignoring metadata payloads)
         print(`  ${cleanWrap(data.text, 74, "  ")}`);
         print("");
 

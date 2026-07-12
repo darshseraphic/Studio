@@ -73,7 +73,6 @@ const bhagvadGeeta = {
             return;
         }
 
-        // Standard Block Wrap Engine: Used for raw verses and poetic transliterations
         const cleanWrap = (text, maxChars = 70, indent = "      ") => {
             if (!text) return "";
             return text
@@ -100,11 +99,9 @@ const bhagvadGeeta = {
                 .join('\n' + indent);
         };
 
-        // Advanced Split-Prose Engine: Injects double-newlines (\n\n) cleanly every 2 sentences 
         const chunkAndWrap = (text, maxChars = 70, indent = "      ") => {
             if (!text) return "";
             
-            // Split by period followed by space to cleanly ignore initials/decimals like 'A.C.' or '1.1'
             const sentences = text.trim().replace(/\s+/g, ' ').split(/(?<=\.)\s+/);
             let paragraphs = [];
             
@@ -130,23 +127,20 @@ const bhagvadGeeta = {
                     if (currentLine) lines.push(currentLine.trim());
                     return lines.join('\n' + indent);
                 })
-                .join('\n\n' + indent); // Formats structural layout breaks beautifully
+                .join('\n\n' + indent);
         };
 
-        // Header Section
         print("");
         print("================================================================================");
         print(`  CHAPTER ${data.chapter}, VERSE ${data.verse}`);
         print("================================================================================");
         print("");
 
-        // Original Verse Section
         print("  [ ORIGINAL SANSKRIT VERSE ]");
         print("  --------------------------------------------------");
         print(`  ${cleanWrap(data.slok, 74, "  ")}`);
         print("");
 
-        // Transliteration Section
         if (data.transliteration) {
             print("  [ TRANSLITERATION ]");
             print("  --------------------------------------------------");
@@ -154,7 +148,6 @@ const bhagvadGeeta = {
             print("");
         }
 
-        // Translations & Commentaries Layout
         print("  [ TRANSLATIONS & COMMENTARIES ]");
         print("  --------------------------------------------------");
         print("");
@@ -167,7 +160,6 @@ const bhagvadGeeta = {
             { key: 'sc', label: 'Sanskrit Commentary' }
         ];
 
-        // List of allowed authors to match against payload strings
         const allowedAuthors = [
             "Swami Adidevananda",
             "Shri Purohit Swami",
@@ -177,8 +169,7 @@ const bhagvadGeeta = {
         for (const key in data) {
             if (data[key] && typeof data[key] === 'object' && data[key].author) {
                 const item = data[key];
-                
-                // Skip rendering if the author is not explicitly allowed
+
                 if (!allowedAuthors.includes(item.author.trim())) {
                     continue;
                 }
