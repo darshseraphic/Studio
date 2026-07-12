@@ -12,6 +12,9 @@ let pendingDeleteType = "";
 let pendingRenameTarget = "";
 let pendingRenameType = "";
 let pendingVisibilityChange = "";
+let pendingSettingsRenameConfirm = false;
+let pendingSettingsRenameInput = false;
+let pendingSettingsRenameOldName = "";
 
 const REPO_NAME_REGEX = /^[a-zA-Z0-9._-]+$/;
 const SAFE_FILE_NAME_REGEX = /^[a-zA-Z0-9._\\-\\/]+$/;
@@ -421,6 +424,7 @@ export function printGithubHelp() {
 export function printSettingsHelp() {
     print("repository settings command maps:");
     print("  settings/help                          - show this settings command list");
+    print("  settings/rename                        - rename the repository (confirmation required)");
     print("  settings/branch/[branchName]           - change the repository's default branch");
     print("  settings/issues/all                    - remove interaction restrictions, issues open to all users");
     print("  settings/issues/collaborative           - restrict issue interactions to collaborators only");
@@ -432,7 +436,7 @@ export function printSettingsHelp() {
 }
 
 export function hasPendingInteraction() {
-    return !!(pendingDeleteTarget || pendingRenameTarget || pendingVisibilityChange);
+    return !!(pendingDeleteTarget || pendingRenameTarget || pendingVisibilityChange || pendingSettingsRenameConfirm || pendingSettingsRenameInput);
 }
 
 export async function handlePendingInteraction(rawInput) {
@@ -652,6 +656,74 @@ export async function handlePendingInteraction(rawInput) {
         } else {
             print(`Are you sure? [Yes] or [No]?`);
         }
+        return;
+    }
+
+    if (pendingSettingsRenameConfirm) {
+        print(`> ${rawInput}`);
+        const lowerInput = rawInput.trim().toLowerCase();
+
+        if (lowerInput === 'yes' || lowerInput === 'y') {
+            pendingSettingsRenameConfirm = false;
+            pendingSettingsRenameInput = true;
+            setMode("main", "Rename> ");
+        } else if (lowerInput === 'no' || lowerInput === 'n') {
+            print("system: rename canceled.");
+            pendingSettingsRenameConfirm = false;
+            pendingSettingsRenameOldName = "";
+            setMode("main", getSystemPrompt());
+        } else {
+            print(`Currently, it's '${sanitizeInputString(pendingSettingsRenameOldName)}'. Are you sure you want to rename it? [Yes] or [No]?`);
+        }
+        return;
+    }
+
+    if (pendingSettingsRenameInput) {
+        print(`Rename> ${rawInput}`);
+        const newRepoName = rawInput.trim();
+
+        if (!newRepoName) {
+            print("error: repository name cannot be empty. try again:");
+            return;
+        }
+        if (!REPO_NAME_REGEX.test(newRepoName) || newRepoName.length > 100) {
+            print("error: invalid repository name format or character structure detected. try again:");
+            return;
+        }
+
+        print(`system: renaming the repository name to '${sanitizeInputString(newRepoName)}'...`);
+
+        const token = localStorage.getItem('user');
+        const username = localStorage.getItem('github_username');
+        const oldName = pendingSettingsRenameOldName;
+
+        try {
+            const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(oldName)}`, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/vnd.github+json'
+                },
+                body: JSON.stringify({ name: newRepoName })
+            });
+
+            if (res.ok) {
+                localStorage.setItem('repository', newRepoName);
+                activeRepo = newRepoName;
+                savePathState();
+                print(`system: done. the repository name is now changed to '${sanitizeInputString(newRepoName)}'.`);
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                print(`error: failed to rename repository. GitHub status ${res.status}: ${errData.message || 'unknown administrative constraint'}`);
+            }
+        } catch (e) {
+            print(`error: unexpected transmission pipeline failure: ${e.message}`);
+        }
+
+        pendingSettingsRenameInput = false;
+        pendingSettingsRenameOldName = "";
+        setMode("main", getSystemPrompt());
         return;
     }
 }
@@ -1411,6 +1483,14 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
         if (!settingsAction || settingsAction === 'help') {
             printSettingsHelp();
+            return;
+        }
+
+        if (settingsAction === 'rename') {
+            print("system: checking the current name of the repository...");
+            pendingSettingsRenameOldName = activeRepoName;
+            print(`Currently, it's '${sanitizeInputString(activeRepoName)}'. Are you sure you want to rename it? [Yes] or [No]?`);
+            pendingSettingsRenameConfirm = true;
             return;
         }
 
