@@ -616,7 +616,7 @@ export async function handlePendingInteraction(rawInput) {
     }
 
     if (pendingVisibilityChange) {
-        print(`> ${rawInput}`);
+        print(`${getGithubConfigPrompt()}${rawInput}`);
         const lowerInput = rawInput.trim().toLowerCase();
 
         if (lowerInput === 'yes' || lowerInput === 'y') {
@@ -660,7 +660,7 @@ export async function handlePendingInteraction(rawInput) {
     }
 
     if (pendingSettingsRenameConfirm) {
-        print(`> ${rawInput}`);
+        print(`${getGithubConfigPrompt()}${rawInput}`);
         const lowerInput = rawInput.trim().toLowerCase();
 
         if (lowerInput === 'yes' || lowerInput === 'y') {
