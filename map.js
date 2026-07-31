@@ -61,39 +61,9 @@ const mapTool = {
                 openedWindow.close();
             }
 
+            // Open the target link directly in a new tab without iframe wrapping
             const targetUrl = `https://anvaka.github.io/city-roads/?q=${encodeURIComponent(locationName)}`;
-            
-            const roadHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <title>City Roads - ${locationName.replace(/"/g, '&quot;')}</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
-        iframe { width: 100%; height: 100%; border: none; }
-    </style>
-</head>
-<body>
-    <iframe src="${targetUrl}"></iframe>
-    <script>
-        window.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key.toLowerCase() === 'e') {
-                e.preventDefault();
-                if (window.opener) {
-                    window.opener.postMessage('close-map-environment', '*');
-                } else {
-                    window.close();
-                }
-            }
-        });
-    </script>
-</body>
-</html>`;
-
-            const blob = new Blob([roadHtml], { type: 'text/html' });
-            const viewerUrl = URL.createObjectURL(blob);
-            openedWindow = window.open(viewerUrl, '_blank');
+            openedWindow = window.open(targetUrl, '_blank');
             return;
         }
 
