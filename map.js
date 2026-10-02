@@ -2,11 +2,17 @@ import { registerTool, print, setMode, getSystemPrompt } from './main.js';
 
 let openedWindow = null;
 
+const closeOpenedMapWindow = () => {
+    if (openedWindow && !openedWindow.closed) {
+        openedWindow.close();
+    }
+
+    openedWindow = null;
+};
+
 window.addEventListener('message', (e) => {
     if (e.data === 'close-map-environment') {
-        if (openedWindow && !openedWindow.closed) {
-            openedWindow.close();
-        }
+        closeOpenedMapWindow();
         print("system: closing active tool environment session [map].");
         setMode("main", getSystemPrompt());
         const cmdInput = document.getElementById('cmd-input');
@@ -21,13 +27,27 @@ const mapTool = {
     helpText: "open an interactive map centered on a location (use: map/[location] or map/road/[location])",
     prompt: "map>",
     onEnter: async () => {
-        print("system: map mode activated. type a location name or map/[location] (or road/[location]). press CTRL + E to exit.");
+        print("system: map mode activated. type a location name or map/[location] (or road/[location]). type exit to return to the main terminal or press CTRL + E.");
     },
     handleInput: async (input) => {
         print(`map>${input}`);
-        
+
         let cleanInput = input.trim();
         if (cleanInput === '') return;
+
+        if (cleanInput.toLowerCase() === 'exit') {
+            closeOpenedMapWindow();
+            print("system: closing active tool environment session [map].");
+            setMode("main", getSystemPrompt());
+
+            const cmdInput = document.getElementById('cmd-input');
+            if (cmdInput) {
+                cmdInput.value = '';
+                cmdInput.style.height = '26px';
+            }
+
+            return;
+        }
 
         if (cleanInput.toLowerCase().startsWith('map/')) {
             cleanInput = cleanInput.substring(4).trim();
@@ -55,138 +75,82 @@ const mapTool = {
         }
 
         if (isRoadMode) {
-            print(`system: generating city roads visualization workspace for "${locationName}"...`);
-            
-            if (openedWindow && !openedWindow.closed) {
-                openedWindow.close();
-            }
+            print(`system: opening city roads visualization for "${locationName}"...`);
+            closeOpenedMapWindow();
 
             const targetUrl = `https://anvaka.github.io/city-roads/?q=${encodeURIComponent(locationName)}`;
-            
-            const roadHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <title>City Roads - ${locationName.replace(/"/g, '&quot;')}</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
-        iframe { width: 100%; height: 100%; border: none; }
-    </style>
-</head>
-<body>
-    <iframe src="${targetUrl}"></iframe>
-    <script>
-        window.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key.toLowerCase() === 'e') {
-                e.preventDefault();
-                if (window.opener) {
-                    window.opener.postMessage('close-map-environment', '*');
-                } else {
-                    window.close();
-                }
-            }
-        });
-    </script>
-</body>
-</html>`;
+            openedWindow = window.open(targetUrl, '_blank');
 
-            const blob = new Blob([roadHtml], { type: 'text/html' });
-            const viewerUrl = URL.createObjectURL(blob);
-            openedWindow = window.open(viewerUrl, '_blank');
+            if (!openedWindow) {
+                print("error: the browser blocked the new tab. allow pop-ups for Studio and try again.");
+                return;
+            }
+
             return;
         }
 
         print(`system: locating geocoding coordinates for "${locationName}"...`);
 
+
         try {
+            closeOpenedMapWindow();
+            openedWindow = window.open('about:blank', '_blank');
+            if (!openedWindow) {
+                print("error: the browser blocked the new tab. allow pop-ups for Studio and try again.");
+                return;
+            }
+
             const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locationName)}&count=1&language=en&format=json`);
-            if (!geoResponse.ok) throw new Error();
-            
+            if (!geoResponse.ok) throw new Error('geocoding request failed');
+
             const geoData = await geoResponse.json();
             if (!geoData || !Array.isArray(geoData.results) || geoData.results.length === 0) {
+                if (openedWindow && !openedWindow.closed) openedWindow.close();
+                openedWindow = null;
                 print(`error: could not resolve coordinates for "${locationName}".`);
                 return;
             }
 
             const locationRecord = geoData.results[0];
-            const lat = locationRecord.latitude;
-            const lon = locationRecord.longitude;
+            const lat = Number(locationRecord.latitude);
+            const lon = Number(locationRecord.longitude);
             const displayName = locationRecord.name + (locationRecord.country ? `, ${locationRecord.country}` : '');
 
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+                if (openedWindow && !openedWindow.closed) openedWindow.close();
+                openedWindow = null;
+                print(`error: received invalid coordinates for "${locationName}".`);
+                return;
+            }
+
             print(`system: found ${displayName} at [Lat: ${lat}, Lon: ${lon}].`);
-
-            const isInverseTheme = document.body.classList.contains('theme-inverse');
-            const styleUrl = isInverseTheme 
-                ? 'https://tiles.openfreemap.org/styles/positron' 
-                : 'https://tiles.openfreemap.org/styles/dark';
-
-            const pinColor = isInverseTheme ? '#000000' : '#ffffff';
-            const circleColor = isInverseTheme ? '#ffffff' : '#000000';
-
-            print("system: generating map viewport instance and launching workspace tab...");
+            print("system: opening Google Maps in a dedicated workspace tab...");
+            const mapQuery = encodeURIComponent(displayName);
+            const mapUrl =
+                `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
 
             if (openedWindow && !openedWindow.closed) {
-                openedWindow.close();
-            }
-
-            const mapHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <title>Map View - ${displayName.replace(/"/g, '&quot;')}</title>
-    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
-    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-    <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
-    <style>
-        body { margin: 0; padding: 0; }
-        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
-    </style>
-</head>
-<body>
-    <div id="map"></div>
-    <script>
-        const map = new maplibregl.Map({
-            container: 'map',
-            style: '${styleUrl}',
-            center: [${lon}, ${lat}],
-            zoom: 13
-        });
-        map.addControl(new maplibregl.NavigationControl());
-
-        const container = document.createElement('div');
-        container.innerHTML = '<svg width="32" height="44" viewBox="0 0 32 44" xmlns="http://www.w3.org/2000/svg"><path d="M16 0C7.2 0 0 7.2 0 16c0 11 16 28 16 28s16-17 16-28c0-8.8-7.2-16-16-16z" fill="${pinColor}"/><circle cx="16" cy="16" r="5.5" fill="${circleColor}"/></svg>';
-        
-        new maplibregl.Marker({ element: container.firstElementChild })
-            .setLngLat([${lon}, ${lat}])
-            .addTo(map);
-
-        window.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key.toLowerCase() === 'e') {
-                e.preventDefault();
-                if (window.opener) {
-                    window.opener.postMessage('close-map-environment', '*');
-                } else {
-                    window.close();
+                openedWindow.location.replace(mapUrl);
+                try {
+                    openedWindow.focus();
+                } catch {
                 }
+            } else {
+                openedWindow = window.open(mapUrl, '_blank');
             }
-        });
-    </script>
-</body>
-</html>`;
 
-            const blob = new Blob([mapHtml], { type: 'text/html' });
-            const viewerUrl = URL.createObjectURL(blob);
-            openedWindow = window.open(viewerUrl, '_blank');
-
+            if (!openedWindow) {
+                print("error: failed to open the map tab.");
+                return;
+            }
         } catch (err) {
-            print("error: failed to securely communicate with the geocoding service framework.");
+            if (openedWindow && !openedWindow.closed) openedWindow.close();
+            openedWindow = null;
+            print("error: failed to resolve the location or open the map workspace.");
         }
     },
     onExit: () => {
-        if (openedWindow && !openedWindow.closed) {
-            openedWindow.close();
-        }
+        closeOpenedMapWindow();
         print("system: exited map engine console interface layout.");
     }
 };
