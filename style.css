@@ -145,3 +145,104 @@ textarea {
     resize: none;
     overflow: hidden;
 }
+
+/* Secure local GitHub session dialog */
+.studio-session-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483646;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.78);
+    font-family: VT323, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.studio-session-dialog {
+    width: min(520px, 100%);
+    border: 1px solid #777;
+    background: #050505;
+    color: #fff;
+    padding: 22px;
+    box-shadow: 0 20px 70px rgba(0, 0, 0, 0.45);
+}
+
+body.theme-inverse .studio-session-dialog {
+    background: #fafafa;
+    color: #000;
+    border-color: #999;
+}
+
+.studio-session-dialog h2 {
+    margin: 0 0 10px;
+    font-size: 28px;
+    font-weight: 400;
+    line-height: 1;
+}
+
+.studio-session-dialog p {
+    margin: 0 0 16px;
+    font-size: 18px;
+    line-height: 1.15;
+    opacity: 0.82;
+}
+
+.studio-session-field {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #666;
+    background: transparent;
+    color: inherit;
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 20px;
+    outline: none;
+}
+
+.studio-session-field:focus {
+    border-color: currentColor;
+}
+
+.studio-session-error {
+    min-height: 22px;
+    margin: 8px 0 0;
+    color: #e63946;
+    font-size: 16px;
+}
+
+.studio-session-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.studio-session-actions button {
+    border: 1px solid currentColor;
+    background: transparent;
+    color: inherit;
+    padding: 8px 14px;
+    font: inherit;
+    font-size: 18px;
+    cursor: pointer;
+}
+
+.studio-session-actions button:hover {
+    background: var(--text-color);
+    color: var(--bg-color);
+}
+
+@media (max-width: 640px) {
+    .studio-session-dialog {
+        padding: 18px;
+    }
+
+    .studio-session-dialog h2 {
+        font-size: 25px;
+    }
+
+    .studio-session-dialog p {
+        font-size: 17px;
+    }
+}

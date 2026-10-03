@@ -1,4 +1,5 @@
 import { networkTool } from './network.js';
+import { getUnlockedUsernameSync } from './session-vault.js';
 
 const outputDiv = document.getElementById('output');
 const cmdInput = document.getElementById('cmd-input');
@@ -28,7 +29,7 @@ export function savePathState() {
 }
 
 export function getSystemPrompt() {
-    const username = localStorage.getItem('github_username') || 'guest';
+    const username = getUnlockedUsernameSync() || 'guest';
     const repo = localStorage.getItem('repository') || '';
     const githubActive = localStorage.getItem('github_active') === 'true';
     let pathStr = '';
@@ -45,7 +46,7 @@ export function getSystemPrompt() {
 }
 
 if (promptSpan) {
-    promptSpan.textContent = localStorage.getItem('terminal_prompt') || getSystemPrompt();
+    promptSpan.textContent = getSystemPrompt();
 }
 
 export function print(text) {
@@ -68,10 +69,8 @@ export function setMode(modeName, promptText = "") {
     
     if (modeName === "main") {
         localStorage.removeItem('terminal_mode');
-        localStorage.removeItem('terminal_prompt');
     } else {
         localStorage.setItem('terminal_mode', modeName);
-        localStorage.setItem('terminal_prompt', targetPrompt);
     }
 
     if (promptSpan) {

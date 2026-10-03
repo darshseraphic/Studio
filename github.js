@@ -4,6 +4,11 @@ import {
     getFullFilePath, savePathState, VALID_EXTENSIONS, usedToolsInSession
 } from './main.js';
 
+import {
+    saveSession, unlockStoredSession, getUnlockedSession, getUnlockedUsernameSync,
+    hasStoredSession, lockSession, clearSession, requestNewSessionPassword
+} from './session-vault.js';
+
 let activeRepo = localStorage.getItem('repository') || '';
 let pendingRepoCreation = null;
 
@@ -24,9 +29,64 @@ function sanitizeInputString(str) {
     return str.trim().replace(/[<>'"\`]/g, '');
 }
 
+function getMemoryGithubSession() {
+    return getUnlockedSession();
+}
+
+async function requireGithubSession() {
+    const existing = getMemoryGithubSession();
+    if (existing) return existing;
+    if (!hasStoredSession()) return null;
+    return await unlockStoredSession();
+}
+
+function clearLegacyAuthStorage() {
+    localStorage.removeItem('user');
+    localStorage.removeItem('github_username');
+}
+
+async function migrateLegacyGithubSession() {
+    if (hasStoredSession()) return getMemoryGithubSession();
+
+    const legacyToken = localStorage.getItem('user');
+    const legacyUsername = localStorage.getItem('github_username');
+    if (!legacyToken || !legacyUsername) return null;
+
+    print('warning: legacy plaintext github session detected. secure migration is required before use.');
+    const password = await requestNewSessionPassword();
+
+    if (password === null) {
+        clearLegacyAuthStorage();
+        print('system: legacy plaintext github credentials were cleared. authenticate again with login/token.');
+        return null;
+    }
+
+    const session = {
+        token: legacyToken,
+        githubUserId: '',
+        githubUsername: legacyUsername,
+        sessionId: crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join(''),
+        repository: localStorage.getItem('repository') || '',
+        githubActive: true,
+        createdAt: new Date().toISOString(),
+        migrated: true
+    };
+
+    try {
+        await saveSession(session, password);
+        clearLegacyAuthStorage();
+        return session;
+    } catch (errorValue) {
+        print(`error: secure session migration failed: ${errorValue instanceof Error ? errorValue.message : 'unknown cryptographic failure'}`);
+        return null;
+    }
+}
+
+
 export async function fetchRepoTree(repoName, subDirectoryPath = '') {
-    const rawToken = localStorage.getItem('user');
-    const rawUsername = localStorage.getItem('github_username');
+    const session = await requireGithubSession();
+    const rawToken = session?.token;
+    const rawUsername = session?.githubUsername;
 
     if (!rawToken || !rawUsername) {
         print("error: authentication token signature missing. login verified credential profiles required.");
@@ -74,7 +134,8 @@ export async function fetchRepoTree(repoName, subDirectoryPath = '') {
 }
 
 export async function fetchUserRepos() {
-    const rawToken = localStorage.getItem('user');
+    const session = await requireGithubSession();
+    const rawToken = session?.token;
     if (!rawToken) {
         print("error: authentication token missing. login first via github > login/token.");
         return [];
@@ -107,8 +168,9 @@ export async function fetchUserRepos() {
 }
 
 export async function pushFileToGitHub(filePath, content, commitMessage = null) {
-    const rawToken = localStorage.getItem('user');
-    const rawUsername = localStorage.getItem('github_username');
+    const session = await requireGithubSession();
+    const rawToken = session?.token;
+    const rawUsername = session?.githubUsername;
     const rawRepo = localStorage.getItem('repository');
 
     if (!rawToken || !rawUsername || !rawRepo) return false;
@@ -178,8 +240,9 @@ export async function pushFileToGitHub(filePath, content, commitMessage = null) 
 }
 
 export async function pullFileFromGitHub(filePath) {
-    const rawToken = localStorage.getItem('user');
-    const rawUsername = localStorage.getItem('github_username');
+    const session = await requireGithubSession();
+    const rawToken = session?.token;
+    const rawUsername = session?.githubUsername;
     const rawRepo = localStorage.getItem('repository');
 
     if (!rawToken || !rawUsername || !rawRepo) return null;
@@ -221,8 +284,9 @@ export async function pullFileFromGitHub(filePath) {
 }
 
 export async function deletePathFromGitHub(filePath) {
-    const rawToken = localStorage.getItem('user');
-    const rawUsername = localStorage.getItem('github_username');
+    const session = await requireGithubSession();
+    const rawToken = session?.token;
+    const rawUsername = session?.githubUsername;
     const rawRepo = localStorage.getItem('repository');
 
     if (!rawToken || !rawUsername || !rawRepo) return false;
@@ -312,8 +376,9 @@ async function renameDirectoryOnGitHub(repoName, oldDirPath, newDirPath) {
 }
 
 async function fetchRepoIssues(repoName, state = 'all') {
-    const token = localStorage.getItem('user');
-    const username = localStorage.getItem('github_username');
+    const session = await requireGithubSession();
+    const token = session?.token;
+    const username = session?.githubUsername;
     if (!token || !username) return null;
 
     try {
@@ -341,8 +406,9 @@ async function verifyRemotePath(repoName, directoryPath = '') {
         return true;
     }
 
-    const token = localStorage.getItem('user');
-    const username = localStorage.getItem('github_username') || 'guest';
+    const session = getMemoryGithubSession();
+    const token = session?.token;
+    const username = session?.githubUsername || 'guest';
 
     if (!token) {
         print("warning: active github auth token not found. switching paths without remote validation verification.");
@@ -378,7 +444,7 @@ async function verifyRemotePath(repoName, directoryPath = '') {
 }
 
 function getGithubConfigPrompt() {
-    const username = localStorage.getItem('github_username') || 'guest';
+    const username = getUnlockedUsernameSync() || 'guest';
     const repo = localStorage.getItem('repository') || '';
     const deepPath = currentPath && currentPath.length > 0 ? '/' + currentPath.join('/') : '';
     return `${username}/github${repo ? '/' + repo : ''}${deepPath}>`;
@@ -389,7 +455,7 @@ export function isInGithubContext() {
 }
 
 export function printGithubHelp() {
-    const activeUsername = localStorage.getItem('github_username') || 'guest';
+    const activeUsername = getUnlockedUsernameSync() || 'guest';
     const dynamicUserCmd = `  ${activeUsername}/`.padEnd(29);
 
     print("github workspace command maps:");
@@ -418,6 +484,7 @@ export function printGithubHelp() {
     print("  issues/reopen/[number]         - reopen a closed issue");
     print(`  issues/comment/[number]/"msg"  - post a comment on an issue`);
     print(`  issues/fixed/[number]/"msg"    - post a comment and close the issue`);
+    print("  lock                           - lock the encrypted github session and release the token from memory");
     print("  exit                           - leave the github workspace and return to the default prompt");
 }
 
@@ -513,8 +580,9 @@ export async function handlePendingInteraction(rawInput) {
 
         if (pendingRenameType === 'repository') {
             print(`system: streaming structural administrative PATCH updates to GitHub repository: '${pendingRenameTarget}'...`);
-            const token = localStorage.getItem('user');
-            const username = localStorage.getItem('github_username');
+            const session = await requireGithubSession();
+            const token = session?.token;
+            const username = session?.githubUsername;
 
             if (!token || !username) {
                 print("error: active github auth credentials not resolved. process aborted.");
@@ -620,8 +688,9 @@ export async function handlePendingInteraction(rawInput) {
         const lowerInput = rawInput.trim().toLowerCase();
 
         if (lowerInput === 'yes' || lowerInput === 'y') {
-            const token = localStorage.getItem('user');
-            const username = localStorage.getItem('github_username');
+            const session = await requireGithubSession();
+            const token = session?.token;
+            const username = session?.githubUsername;
             const activeRepoName = localStorage.getItem('repository');
             const newVisibility = pendingVisibilityChange;
 
@@ -693,8 +762,9 @@ export async function handlePendingInteraction(rawInput) {
 
         print(`system: renaming the repository name to '${sanitizeInputString(newRepoName)}'...`);
 
-        const token = localStorage.getItem('user');
-        const username = localStorage.getItem('github_username');
+        const session = await requireGithubSession();
+        const token = session?.token;
+        const username = session?.githubUsername;
         const oldName = pendingSettingsRenameOldName;
 
         try {
@@ -728,12 +798,12 @@ export async function handlePendingInteraction(rawInput) {
     }
 }
 
-const WORKSPACE_FIRST_SEGMENTS = new Set(['create', 'delete', 'rename', 'pull', 'save', 'run', 'fletch', 'issues', 'settings']);
+const WORKSPACE_FIRST_SEGMENTS = new Set(['create', 'delete', 'rename', 'pull', 'save', 'run', 'fletch', 'issues', 'settings', 'lock']);
 
 export function isWorkspaceCommand(cleanCommand) {
     const lowerCommand = cleanCommand.toLowerCase();
     const firstSegment = lowerCommand.split('/')[0];
-    const currentUsername = (localStorage.getItem('github_username') || 'guest').toLowerCase();
+    const currentUsername = (getUnlockedUsernameSync() || 'guest').toLowerCase();
 
     if (firstSegment === 'github') return true;
     if (lowerCommand === 'editor' || firstSegment === 'edit') return true;
@@ -749,12 +819,22 @@ export function isWorkspaceCommand(cleanCommand) {
 
 export async function handleWorkspaceCommand(cleanCommand) {
     const lowerCommand = cleanCommand.toLowerCase();
-    const currentUsername = (localStorage.getItem('github_username') || 'guest').toLowerCase();
+    const currentUsername = (getUnlockedUsernameSync() || 'guest').toLowerCase();
     const firstSegment = lowerCommand.split('/')[0];
     const isRootReset = (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`);
     const activeRepoName = localStorage.getItem('repository');
 
-    
+    if (lowerCommand === 'lock') {
+        lockSession();
+        localStorage.removeItem('github_active');
+        currentPath.length = 0;
+        virtualDirectories.clear();
+        savePathState();
+        print("system: encrypted github session locked. plaintext authorization material released from memory.");
+        setMode('main', getSystemPrompt());
+        return;
+    }
+
     if (currentPath.length > 0) {
         if (firstSegment === 'github') {
             print(`You are inside a deep directory, do ${currentUsername}/ to use those commands`);
@@ -1004,8 +1084,9 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
         const subParts = targetPayload.split('/');
         const subAction = subParts[0].toLowerCase();
-        const token = localStorage.getItem('user');
-        const username = localStorage.getItem('github_username');
+        const session = await requireGithubSession();
+        const token = session?.token;
+        const username = session?.githubUsername;
 
         if (subAction === 'close' || subAction === 'reopen') {
             const issueNumber = subParts.slice(1).join('/').trim().replace('#', '');
@@ -1131,8 +1212,9 @@ export async function handleWorkspaceCommand(cleanCommand) {
             return;
         }
 
-        const token = localStorage.getItem('user');
-        const username = localStorage.getItem('github_username');
+        const session = await requireGithubSession();
+        const token = session?.token;
+        const username = session?.githubUsername;
 
         if (!token || !username) {
             print("error: active github auth token not found. please login using github tool first.");
@@ -1271,8 +1353,9 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 return;
             }
             print("system: fletching repository description from remote...");
-            const token = localStorage.getItem('user');
-            const username = localStorage.getItem('github_username');
+            const session = await requireGithubSession();
+            const token = session?.token;
+            const username = session?.githubUsername;
             try {
                 const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
@@ -1341,8 +1424,9 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 print("error: no local description buffer found.");
                 return;
             }
-            const token = localStorage.getItem('user');
-            const username = localStorage.getItem('github_username');
+            const session = await requireGithubSession();
+            const token = session?.token;
+            const username = session?.githubUsername;
             try {
                 const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
                     method: 'PATCH',
@@ -1449,8 +1533,9 @@ export async function handleWorkspaceCommand(cleanCommand) {
         if (!activeRepoName) {
             print("error: no active repository detected.");
         } else {
-            const token = localStorage.getItem('user');
-            const username = localStorage.getItem('github_username');
+            const session = await requireGithubSession();
+            const token = session?.token;
+            const username = session?.githubUsername;
             try {
                 const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
@@ -1477,8 +1562,9 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
         const settingsParts = targetPayload.split('/');
         const settingsAction = (settingsParts[0] || '').toLowerCase();
-        const token = localStorage.getItem('user');
-        const username = localStorage.getItem('github_username');
+        const session = await requireGithubSession();
+        const token = session?.token;
+        const username = session?.githubUsername;
         const repoApiBase = `https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}`;
 
         if (!settingsAction || settingsAction === 'help') {
@@ -1719,7 +1805,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 }
 
 const githubTool = {
-    helpText: "configure terminal verification credentials. subcommands: login/token, repo/name, confirm, logout, exit",
+    helpText: "configure terminal verification credentials. subcommands: login/token, repo/name, confirm, lock, logout, exit",
     get prompt() {
         return getGithubConfigPrompt();
     },
@@ -1730,21 +1816,27 @@ const githubTool = {
 
     onEnter: async () => {
         localStorage.setItem('github_active', 'true');
-        const token = localStorage.getItem('user');
-        const username = localStorage.getItem('github_username');
+
+        let session = getMemoryGithubSession();
+        if (!session && localStorage.getItem('user') && localStorage.getItem('github_username')) {
+            session = await migrateLegacyGithubSession();
+        } else if (!session && hasStoredSession()) {
+            session = await unlockStoredSession();
+        }
+
         const repo = localStorage.getItem('repository');
 
-        if (token && username) {
-            print(`status: verified authorization stream caching as @${sanitizeInputString(username)}`);
+        if (session?.token && session.githubUsername) {
+            print(`status: verified encrypted authorization session as @${sanitizeInputString(session.githubUsername)}`);
             if (repo) {
                 print(`active structural tracking repo context: ${sanitizeInputString(repo)}`);
             } else {
                 print("active workspace repo: none contextually bound (use 'repo/name', or exit and 'fletch' to list repos. Help for library)");
             }
         } else {
-            print("status: unauthenticated. authorize workspace by generating a personal access token and entering: login/token");
+            print("status: unauthenticated or locked. authorize via login/token, or unlock the stored secure session.");
         }
-        print("type 'exit' or press CTRL + E to shift back to your main prompt loop.");
+        print("type 'exit', 'lock', or press CTRL + E to shift back to your main prompt loop.");
     },
 
     handleInput: async (input) => {
@@ -1758,7 +1850,7 @@ const githubTool = {
         
         if (currentPath.length > 0) {
             if (lowerInput === 'github' || lowerInput.startsWith('github/') || lowerInput.startsWith('github ')) {
-                const username = localStorage.getItem('github_username') || 'guest';
+                const username = getUnlockedUsernameSync() || 'guest';
                 print(`You are inside a deep directory, do ${username}/ to use those commands`);
                 return;
             }
@@ -1767,7 +1859,7 @@ const githubTool = {
         
         if (activeRepoName || currentPath.length > 0) {
             if (lowerInput === 'exit' || lowerInput === 'logout' || lowerInput.startsWith('login/token')) {
-                const username = localStorage.getItem('github_username') || 'guest';
+                const username = getUnlockedUsernameSync() || 'guest';
                 print(`error: command such as exit, logout and login/token will not work inside the working directory. Do ${username}/ to use those commands`);
                 return;
             }
@@ -1871,13 +1963,33 @@ const githubTool = {
                 if (res.ok) {
                     const userData = await res.json();
                     if (userData && userData.login) {
-                        localStorage.setItem('user', value);
-                        localStorage.setItem('github_username', userData.login);
-                        
-                        setMode('github', getGithubConfigPrompt());
+                        const sessionPassword = await requestNewSessionPassword();
+                        if (sessionPassword === null) {
+                            print("system: secure session creation canceled. token was not persisted.");
+                            return;
+                        }
 
-                        print(`system: successfully authenticated as @${sanitizeInputString(userData.login)}!`);
-                        print("status: you are still in configuration mode. Now bind your workspace target via: repo/name");
+                        const session = {
+                            token: value,
+                            githubUserId: typeof userData.id === 'number' ? String(userData.id) : '',
+                            githubUsername: userData.login,
+                            sessionId: crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join(''),
+                            repository: localStorage.getItem('repository') || '',
+                            githubActive: true,
+                            createdAt: new Date().toISOString()
+                        };
+
+                        try {
+                            await saveSession(session, sessionPassword);
+                            clearLegacyAuthStorage();
+                            localStorage.setItem('github_active', 'true');
+                            setMode('github', getGithubConfigPrompt());
+
+                            print(`system: successfully authenticated and stored as an encrypted session for @${sanitizeInputString(userData.login)}.`);
+                            print("status: session key is held in memory only. bind your workspace target via: repo/name");
+                        } catch (errorValue) {
+                            print(`error: secure session storage failed: ${errorValue instanceof Error ? errorValue.message : 'unknown cryptographic failure'}`);
+                        }
                     } else {
                         print("error: failed to safely extract parseable metadata profile from endpoint data payload.");
                     }
@@ -1891,8 +2003,9 @@ const githubTool = {
         }
 
         if (action === 'repo') {
-            const token = localStorage.getItem('user');
-            const username = localStorage.getItem('github_username');
+            const session = await requireGithubSession();
+            const token = session?.token;
+            const username = session?.githubUsername;
 
             if (!token || !username) {
                 print("error: you must log in and verify your credentials before tracking a workspace repository.");
@@ -1937,7 +2050,8 @@ const githubTool = {
         }
 
         if (action === 'confirm') {
-            const token = localStorage.getItem('user');
+            const session = await requireGithubSession();
+            const token = session?.token;
             if (!token) {
                 print("error: active authorization session context is not initialized.");
                 return;
@@ -1982,9 +2096,16 @@ const githubTool = {
             return;
         }
 
+        if (action === 'lock') {
+            lockSession();
+            localStorage.removeItem('github_active');
+            print("system: encrypted github session locked. plaintext authorization material released from memory.");
+            setMode('github', getGithubConfigPrompt());
+            return;
+        }
+
         if (action === 'logout') {
-            localStorage.removeItem('user');
-            localStorage.removeItem('github_username');
+            clearSession();
             localStorage.removeItem('repository');
             localStorage.removeItem('github_active');
             currentPath.length = 0;
@@ -1995,7 +2116,7 @@ const githubTool = {
 
             setMode('github', getGithubConfigPrompt());
 
-            print("system: authentication tracking arrays systematically cleared.");
+            print("system: encrypted authentication session destroyed and workspace tracking context cleared.");
             return;
         }
 
@@ -2004,7 +2125,7 @@ const githubTool = {
             return;
         }
 
-        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, logout, exit");
+        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, lock, logout, exit");
     },
     onExit: () => {
         print("system: exited github config mode.");

@@ -1,7 +1,8 @@
 import { registerTool, print, getSystemPrompt, setMode } from './main.js';
+import { getUnlockedUsernameSync } from './session-vault.js';
 
 function getGeetaPrompt() {
-    const username = localStorage.getItem('github_username') || 'guest';
+    const username = getUnlockedUsernameSync() || 'guest';
     return `${username}/bhagvad/geeta>`;
 }
 

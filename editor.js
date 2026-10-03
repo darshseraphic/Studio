@@ -1,4 +1,5 @@
 import { registerTool, print, setMode, getSystemPrompt, fileBuffers, getFullFilePath } from './main.js';
+import { getUnlockedSession } from './session-vault.js';
 
 let editingFile = "";
 let editorLines = [];
@@ -281,8 +282,14 @@ registerTool('save', {
                 setMode("main", getSystemPrompt());
                 return;
             }
-            const token = localStorage.getItem('user');
-            const username = localStorage.getItem('github_username');
+            const session = getUnlockedSession();
+            const token = session?.token;
+            const username = session?.githubUsername;
+            if (!token || !username) {
+                print("error: encrypted github session is locked or unavailable. unlock through the github workspace first.");
+                setMode("main", getSystemPrompt());
+                return;
+            }
             try {
                 print("system: streaming description updates to remote repository profile...");
                 const res = await fetch(`https://api.github.com/repos/${username}/${activeRepo}`, {
