@@ -1,3 +1,4 @@
+import { secureFetch } from './network-security.js';
 import { registerTool, print, setMode, getSystemPrompt, fileBuffers, getFullFilePath } from './main.js';
 import { getUnlockedSession } from './session-vault.js';
 
@@ -292,7 +293,7 @@ registerTool('save', {
             }
             try {
                 print("system: streaming description updates to remote repository profile...");
-                const res = await fetch(`https://api.github.com/repos/${username}/${activeRepo}`, {
+                const res = await secureFetch(`https://api.github.com/repos/${username}/${activeRepo}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,

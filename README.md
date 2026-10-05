@@ -2,6 +2,14 @@
 
 A comprehensive, production-grade technical manual and operational guide for the modular web terminal toolset. This document provides step-by-step breakdowns, architecture blueprints, syntax rules, execution pipelines, and error handling for all registered tools.
 
+## Security Architecture
+
+Studio now routes application API traffic through a centralized `network-security.js` gateway. API requests are restricted to the documented Studio service origins, require HTTPS (with localhost HTTP allowed only for local development), omit browser credentials, send no referrer, reject redirects, and time out after a bounded interval by default.
+
+External browser navigation from the `open` command is handled separately through the same security module. It rejects non-web URL schemes, embedded credentials, and non-local HTTP destinations before opening a new tab with `noopener,noreferrer`.
+
+The HTML Content Security Policy also keeps `connect-src` aligned with the API allowlist and disables frames and plugin/object embedding. The GitHub session remains protected by the existing encrypted session vault; the Argon2id implementation is currently loaded from the pinned `hash-wasm@4.12.0` CDN and is intentionally retained in the CSP until the dependency is bundled locally in the next security phase.
+
 ## Executive Architecture Overview
 
 The system operates as an interactive, multi-context web terminal. Each tool registers into a central command registry using `registerTool()` and controls context transitions through `setMode()`.
@@ -48,7 +56,7 @@ The Bhagavad Geeta Reader allows users to explore chapters and individual shloks
   1. **Input Normalization**: Trims whitespace and extracts the command string.
   2. **Sub-string Filter**: Bypasses processing if input equals root keywords like `'geeta'`, `'bhagvad'`, or trailing slash variations.
   3. **Format Validation**: Splits input by `/`. Validates that exactly two numeric components exist using the regex `/^\d+$/`.
-  4. **API Request**: Performs an asynchronous `fetch()` request to `https://vedicscriptures.github.io/slok/${chapter}/${shlok}`.
+  4. **API Request**: Performs an asynchronous `secureFetch()` request to `https://vedicscriptures.github.io/slok/${chapter}/${shlok}`.
   5. **Payload Validation**: Verifies HTTP response status (`res.ok`) and confirms presence of `data.slok`.
   6. **Text Formatting Engine**:
      * Applies `cleanWrap()` to format Sanskrit text and transliteration into clean, fixed-width blocks (max 74 characters wide) with uniform line indentation.
@@ -105,7 +113,7 @@ The Holy Bible Reader enables fetching specific verses across various translatio
   3. **Secondary Partition**: Splits the second segment across the `:` character to isolate `chapter` and `verse` numbers.
   4. **Syntax Validation**: Validates that both chapter and verse match numeric pattern `/^\d+$/`.
   5. **URL Encoding**: Encodes the book name using `encodeURIComponent()` to safely handle multi-word books (e.g., "1 john").
-  6. **Network Request**: Issues an HTTP GET request to `https://bible-api.com/${encodedBook}+${chapter}:${verse}`.
+  6. **Network Request**: Issues a `secureFetch()` GET request to `https://bible-api.com/${encodedBook}+${chapter}:${verse}`.
   7. **Error Verification**: Evaluates standard HTTP errors (e.g., 404 for invalid references) and gracefully logs status failures.
   8. **Text Formatting & Rendering**:
      * Extracts reference string (`data.reference`) and scripture passage (`data.text`).
@@ -544,3 +552,16 @@ github           exit / [username]/                Unbind repository / exit work
 | **Calculator** | `quadratic systems require exactly three scalar coefficient variables` | `solve:quadratic()` received an incorrect number of coefficients. | Provide exactly three numeric coefficients: `solve:quadratic(a, b, c)`. |
 | **GitHub** | `error: authentication token signature missing` | Authorization token is missing from local storage key `'user'`. | Authenticate by saving a valid GitHub token in login settings. |
 | **GitHub** | `error: layout configuration rejected. extension... breaks systemic syntax rule maps` | Target file extension is not listed in `VALID_EXTENSIONS`. | Save or rename the file using a supported plaintext format extension. |
+## Argon2id session provider
+
+GitHub session key derivation now runs behind a dedicated same-origin Web Worker. The worker is terminated after each derivation so its temporary Argon2 memory is not retained across session operations. The session format remains Argon2id v1.3-compatible with 128 MiB memory, 4 iterations, parallelism 1, and a 32-byte derived key.
+
+The current worker bridge still loads the pinned `hash-wasm@4.12.0` provider from jsDelivr. This is intentionally isolated to one worker file so the remaining migration is a drop-in replacement with a locally bundled provider; no session-vault API changes are required.
+
+### Vendoring the Argon2id implementation
+
+The Argon2id worker prefers a same-origin `vendor/argon2.umd.min.js` file. Run
+`scripts/vendor-argon2-provider.sh` on a machine with npm access to fetch the
+pinned `hash-wasm@4.12.0` package, copy only the Argon2 bundle, and preserve
+its license. Until that file is present, the worker uses the already-pinned
+jsDelivr fallback so existing sessions do not regress.

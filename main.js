@@ -1,3 +1,4 @@
+import { openExternalUrl } from './network-security.js';
 import { networkTool } from './network.js';
 import { getUnlockedUsernameSync } from './session-vault.js';
 
@@ -227,10 +228,15 @@ if (cmdInput) {
                     print("error: specify a valid URL to open.");
                 } else {
                     let url = urlTarget;
-                    if (!/^https?:\/\//i.test(url)) {
+                    if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) {
                         url = 'https://' + url;
                     }
-                    window.open(url, '_blank', 'noopener,noreferrer');
+
+                    try {
+                        openExternalUrl(url);
+                    } catch (errorValue) {
+                        print(`error: ${errorValue instanceof Error ? errorValue.message : 'external navigation rejected by security policy.'}`);
+                    }
                 }
             } else if (GitHub.isWorkspaceCommand(cleanCommand)) {
                 await GitHub.handleWorkspaceCommand(cleanCommand);

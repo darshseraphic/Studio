@@ -1,3 +1,4 @@
+import { secureFetch } from './network-security.js';
 import { registerTool, print, getSystemPrompt, setMode } from './main.js';
 import { getUnlockedUsernameSync } from './session-vault.js';
 
@@ -58,7 +59,7 @@ const bhagvadGeeta = {
         let data = null;
 
         try {
-            const res = await fetch(directUrl);
+            const res = await secureFetch(directUrl);
             if (!res.ok) {
                 print(`error: unable to retrieve chapter ${chapter}, shlok ${shlok}. status ${res.status}.`);
                 return;

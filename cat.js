@@ -1,3 +1,4 @@
+import { secureFetch } from './network-security.js';
 import { registerTool, print } from './main.js';
 
 const cat = {
@@ -20,7 +21,7 @@ const cat = {
         if (command === 'random') {
             print("system: fetching a random cat fact...");
             try {
-                const response = await fetch('https://catfact.ninja/fact');
+                const response = await secureFetch('https://catfact.ninja/fact');
                 if (!response.ok) throw new Error();
                 const data = await response.json();
                 
@@ -42,7 +43,7 @@ const cat = {
 
             print(`system: fetching cat breeds database payload (page ${page})...`);
             try {
-                const response = await fetch(`https://catfact.ninja/breeds?page=${page}`);
+                const response = await secureFetch(`https://catfact.ninja/breeds?page=${page}`);
                 if (!response.ok) throw new Error();
                 const data = await response.json();
 

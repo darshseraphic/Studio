@@ -14,10 +14,10 @@ const ARGON2_CONFIG = Object.freeze({
 
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 32;
-const ARGON2_CDN = 'https://cdn.jsdelivr.net/npm/hash-wasm@4.12.0/dist/argon2.umd.min.js';
+const ARGON2_WORKER_PATH = './argon2-worker.js';
 
 let unlockedSession = null;
-let argon2LoadPromise = null;
+let argon2RequestCounter = 0;
 
 function assertSecureContext() {
     if (!window.isSecureContext || !window.crypto?.subtle) {
@@ -177,52 +177,74 @@ function requestPassword({ mode = 'unlock' } = {}) {
     });
 }
 
-async function loadArgon2() {
-    if (argon2LoadPromise) return argon2LoadPromise;
-
-    argon2LoadPromise = new Promise((resolve, reject) => {
-        if (globalThis.hashwasm?.argon2id) {
-            resolve(globalThis.hashwasm.argon2id);
-            return;
-        }
-
-        const script = document.createElement('script');
-        script.src = ARGON2_CDN;
-        script.async = true;
-        script.crossOrigin = 'anonymous';
-        script.onload = () => {
-            if (globalThis.hashwasm?.argon2id) {
-                resolve(globalThis.hashwasm.argon2id);
-            } else {
-                reject(new Error('Argon2id module loaded without the expected API.'));
-            }
-        };
-        script.onerror = () => reject(new Error('Unable to load the Argon2id implementation.'));
-        document.head.appendChild(script);
-    });
-
-    return argon2LoadPromise;
+function createArgon2Worker() {
+    if (typeof Worker !== 'function') {
+        throw new Error('Studio requires Web Worker support for the Argon2id session provider.');
+    }
+    return new Worker(ARGON2_WORKER_PATH, { name: 'studio-argon2' });
 }
 
 async function deriveKeyBytes(password, salt) {
     assertSecureContext();
     validateSessionPassword(password);
 
-    const argon2id = await loadArgon2();
-    const derived = await argon2id({
-        password,
-        salt,
-        parallelism: ARGON2_CONFIG.parallelism,
-        iterations: ARGON2_CONFIG.iterations,
-        memorySize: ARGON2_CONFIG.memorySize,
-        hashLength: ARGON2_CONFIG.hashLength,
-        outputType: ARGON2_CONFIG.outputType
-    });
+    const worker = createArgon2Worker();
+    const requestId = ++argon2RequestCounter;
+    const saltCopy = new Uint8Array(salt);
 
-    if (!(derived instanceof Uint8Array) || derived.length !== ARGON2_CONFIG.hashLength) {
-        throw new Error('Argon2id produced an invalid key length.');
-    }
-    return derived;
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const timeoutId = window.setTimeout(() => {
+            fail(new Error('Argon2id derivation timed out.'));
+        }, 120000);
+        const cleanup = () => {
+            window.clearTimeout(timeoutId);
+            worker.removeEventListener('message', handleMessage);
+            worker.removeEventListener('error', handleError);
+        };
+        const fail = (errorValue) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            try { worker.terminate(); } catch { /* best-effort cleanup */ }
+            reject(errorValue instanceof Error ? errorValue : new Error('Argon2id worker failed.'));
+        };
+        const handleMessage = (event) => {
+            const data = event.data || {};
+            if (data.requestId !== requestId) return;
+            if (data.ok !== true || !(data.key instanceof ArrayBuffer)) {
+                fail(new Error(typeof data.error === 'string' ? data.error : 'Argon2id derivation failed.'));
+                return;
+            }
+
+            settled = true;
+            cleanup();
+            try { worker.terminate(); } catch { /* best-effort cleanup */ }
+
+            const derived = new Uint8Array(data.key);
+            if (derived.length !== ARGON2_CONFIG.hashLength) {
+                derived.fill(0);
+                reject(new Error('Argon2id produced an invalid key length.'));
+                return;
+            }
+            resolve(derived);
+        };
+        const handleError = (event) => {
+            fail(new Error(event?.message || 'Argon2id worker failed.'));
+        };
+
+        worker.addEventListener('message', handleMessage);
+        worker.addEventListener('error', handleError);
+        worker.postMessage({
+            requestId,
+            password,
+            salt: saltCopy.buffer,
+            parallelism: ARGON2_CONFIG.parallelism,
+            iterations: ARGON2_CONFIG.iterations,
+            memorySize: ARGON2_CONFIG.memorySize,
+            hashLength: ARGON2_CONFIG.hashLength
+        }, [saltCopy.buffer]);
+    });
 }
 
 async function importAesKey(rawKey) {
@@ -383,7 +405,7 @@ export const SECURITY_CONFIG = Object.freeze({
     storageKey: STORAGE_KEY,
     passwordMin: PASSWORD_MIN,
     passwordMax: PASSWORD_MAX,
-    argon2: { ...ARGON2_CONFIG },
+    argon2: { ...ARGON2_CONFIG, workerPath: ARGON2_WORKER_PATH },
     aes: {
         name: 'AES-GCM-256',
         ivBytes: 12,

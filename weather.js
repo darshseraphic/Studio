@@ -1,3 +1,4 @@
+import { secureFetch } from './network-security.js';
 import { registerTool, print } from './main.js';
 
 let weatherSessionLines = JSON.parse(localStorage.getItem('weather')) || [];
@@ -27,7 +28,7 @@ const weather = {
 
             const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-            const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locationName)}&count=1&language=en&format=json`);
+            const geoResponse = await secureFetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locationName)}&count=1&language=en&format=json`);
             if (!geoResponse.ok) throw new Error();
             const geoData = await geoResponse.json();
 
@@ -39,7 +40,7 @@ const weather = {
             const { latitude, longitude, name, country } = geoData.results[0];
             print(`system: fetching data for ${name}, ${country}...`);
 
-            const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_180m,weather_code,is_day&timezone=${encodeURIComponent(userTimeZone)}`);
+            const weatherResponse = await secureFetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_180m,weather_code,is_day&timezone=${encodeURIComponent(userTimeZone)}`);
             if (!weatherResponse.ok) throw new Error();
             const data = await weatherResponse.json();
 

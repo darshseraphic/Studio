@@ -1,4 +1,5 @@
 import { registerTool, print, setMode, getSystemPrompt } from './main.js';
+import { secureFetch, openExternalUrl } from './network-security.js';
 
 let openedWindow = null;
 
@@ -79,10 +80,10 @@ const mapTool = {
             closeOpenedMapWindow();
 
             const targetUrl = `https://anvaka.github.io/city-roads/?q=${encodeURIComponent(locationName)}`;
-            openedWindow = window.open(targetUrl, '_blank');
-
-            if (!openedWindow) {
-                print("error: the browser blocked the new tab. allow pop-ups for Studio and try again.");
+            try {
+                openedWindow = openExternalUrl(targetUrl);
+            } catch (errorValue) {
+                print(`error: ${errorValue instanceof Error ? errorValue.message : 'external map navigation was rejected.'}`);
                 return;
             }
 
@@ -94,13 +95,24 @@ const mapTool = {
 
         try {
             closeOpenedMapWindow();
+
+            // Open the new tab immediately from the user command so browser popup blockers
+            // are less likely to reject it while geocoding runs asynchronously.
             openedWindow = window.open('about:blank', '_blank');
+            if (openedWindow) {
+                try {
+                    openedWindow.opener = null;
+                } catch {
+                    try { openedWindow.close(); } catch { /* best-effort cleanup */ }
+                    openedWindow = null;
+                }
+            }
             if (!openedWindow) {
                 print("error: the browser blocked the new tab. allow pop-ups for Studio and try again.");
                 return;
             }
 
-            const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locationName)}&count=1&language=en&format=json`);
+            const geoResponse = await secureFetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locationName)}&count=1&language=en&format=json`);
             if (!geoResponse.ok) throw new Error('geocoding request failed');
 
             const geoData = await geoResponse.json();
@@ -125,6 +137,11 @@ const mapTool = {
 
             print(`system: found ${displayName} at [Lat: ${lat}, Lon: ${lon}].`);
             print("system: opening Google Maps in a dedicated workspace tab...");
+
+            // Google Maps URLs use a search query to open a real Maps page for
+            // the resolved place. The geocoding step above gives us a canonical
+            // display name, which is preferable to sending bare coordinates when
+            // we want Google Maps to identify the place itself.
             const mapQuery = encodeURIComponent(displayName);
             const mapUrl =
                 `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
@@ -134,9 +151,11 @@ const mapTool = {
                 try {
                     openedWindow.focus();
                 } catch {
+                    // Focusing a cross-origin tab can be denied by the browser.
                 }
             } else {
-                openedWindow = window.open(mapUrl, '_blank');
+                // The first tab may have been closed while geocoding was in progress.
+                openedWindow = openExternalUrl(mapUrl);
             }
 
             if (!openedWindow) {

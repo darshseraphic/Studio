@@ -1,3 +1,4 @@
+import { secureFetch } from './network-security.js';
 import {
     registerTool, print, getSystemPrompt, setMode, registry,
     currentPath, fileBuffers, virtualDirectories,
@@ -99,7 +100,7 @@ export async function fetchRepoTree(repoName, subDirectoryPath = '') {
     const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${cleanSubPath}`;
 
     try {
-        const res = await fetch(apiPath, {
+        const res = await secureFetch(apiPath, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -142,7 +143,7 @@ export async function fetchUserRepos() {
     }
 
     try {
-        const res = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
+        const res = await secureFetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -196,7 +197,7 @@ export async function pushFileToGitHub(filePath, content, commitMessage = null) 
         const base64Content = btoa(binaryString);
         let sha = null;
 
-        const fileCheck = await fetch(apiPath, {
+        const fileCheck = await secureFetch(apiPath, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -222,7 +223,7 @@ export async function pushFileToGitHub(filePath, content, commitMessage = null) 
             payload.sha = sha;
         }
 
-        const pushRes = await fetch(apiPath, {
+        const pushRes = await secureFetch(apiPath, {
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -256,7 +257,7 @@ export async function pullFileFromGitHub(filePath) {
     const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFilePath}`;
 
     try {
-        const res = await fetch(apiPath, {
+        const res = await secureFetch(apiPath, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -299,7 +300,7 @@ export async function deletePathFromGitHub(filePath) {
     const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFilePath}`;
 
     try {
-        const res = await fetch(apiPath, {
+        const res = await secureFetch(apiPath, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -324,7 +325,7 @@ export async function deletePathFromGitHub(filePath) {
             return overallSuccess;
         }
         else if (data && typeof data.sha === 'string') {
-            const deleteRes = await fetch(apiPath, {
+            const deleteRes = await secureFetch(apiPath, {
                 method: 'DELETE',
                 headers: {
                     'Authorization': `Bearer ${rawToken}`,
@@ -382,7 +383,7 @@ async function fetchRepoIssues(repoName, state = 'all') {
     if (!token || !username) return null;
 
     try {
-        const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(repoName)}/issues?state=${state}&per_page=100`, {
+        const res = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(repoName)}/issues?state=${state}&per_page=100`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -429,7 +430,7 @@ async function verifyRemotePath(repoName, directoryPath = '') {
     }
 
     try {
-        const res = await fetch(url, {
+        const res = await secureFetch(url, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -588,7 +589,7 @@ export async function handlePendingInteraction(rawInput) {
                 print("error: active github auth credentials not resolved. process aborted.");
             } else {
                 try {
-                    const patchRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(pendingRenameTarget)}`, {
+                    const patchRes = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(pendingRenameTarget)}`, {
                         method: 'PATCH',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -696,7 +697,7 @@ export async function handlePendingInteraction(rawInput) {
 
             print(`system: updating repository visibility to '${newVisibility}'...`);
             try {
-                const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}`, {
+                const res = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -768,7 +769,7 @@ export async function handlePendingInteraction(rawInput) {
         const oldName = pendingSettingsRenameOldName;
 
         try {
-            const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(oldName)}`, {
+            const res = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(oldName)}`, {
                 method: 'PATCH',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -1097,7 +1098,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const newState = subAction === 'close' ? 'closed' : 'open';
             print(`system: updating issue ${issueNumber} state to '${newState}'...`);
             try {
-                const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
+                const res = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1132,7 +1133,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
             print(`system: posting comment to issue ${issueNumber}...`);
             try {
-                const commentRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}/comments`, {
+                const commentRes = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}/comments`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1149,7 +1150,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 print(`system: comment posted successfully to issue ${issueNumber}.`);
 
                 if (subAction === 'fixed') {
-                    const closeRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
+                    const closeRes = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
                         method: 'PATCH',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1224,7 +1225,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
         if (!activeRepoName) {
             print(`system: compiling remote initialization sequence for new GitHub repository: '${targetPayload}'...`);
             try {
-                const createRes = await fetch('https://api.github.com/user/repos', {
+                const createRes = await secureFetch('https://api.github.com/user/repos', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1357,7 +1358,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const token = session?.token;
             const username = session?.githubUsername;
             try {
-                const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
+                const res = await secureFetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1428,7 +1429,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const token = session?.token;
             const username = session?.githubUsername;
             try {
-                const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
+                const res = await secureFetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1537,7 +1538,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const token = session?.token;
             const username = session?.githubUsername;
             try {
-                const res = await fetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
+                const res = await secureFetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1589,7 +1590,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
             print(`system: updating default branch to '${sanitizeInputString(branchName)}'...`);
             try {
-                const res = await fetch(repoApiBase, {
+                const res = await secureFetch(repoApiBase, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1621,7 +1622,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             if (issueMode === 'all') {
                 print("system: removing interaction restrictions, issues open to all users...");
                 try {
-                    const res = await fetch(`${repoApiBase}/interaction-limits`, {
+                    const res = await secureFetch(`${repoApiBase}/interaction-limits`, {
                         method: 'DELETE',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1639,7 +1640,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             } else {
                 print("system: restricting issue interactions to collaborators only...");
                 try {
-                    const res = await fetch(`${repoApiBase}/interaction-limits`, {
+                    const res = await secureFetch(`${repoApiBase}/interaction-limits`, {
                         method: 'PUT',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1664,7 +1665,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const fundingPath = '.github/FUNDING.yml';
             print("system: checking current sponsorship funding configuration...");
             try {
-                const checkRes = await fetch(`${repoApiBase}/contents/${fundingPath}`, {
+                const checkRes = await secureFetch(`${repoApiBase}/contents/${fundingPath}`, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1672,7 +1673,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 if (checkRes.ok) {
                     const fileData = await checkRes.json();
                     print("system: removing sponsorship funding file, disabling sponsor button...");
-                    const deleteRes = await fetch(`${repoApiBase}/contents/${fundingPath}`, {
+                    const deleteRes = await secureFetch(`${repoApiBase}/contents/${fundingPath}`, {
                         method: 'DELETE',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1695,7 +1696,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                         binaryString += String.fromCharCode(uint8Array[i]);
                     }
                     const base64Content = btoa(binaryString);
-                    const createRes = await fetch(`${repoApiBase}/contents/${fundingPath}`, {
+                    const createRes = await secureFetch(`${repoApiBase}/contents/${fundingPath}`, {
                         method: 'PUT',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1722,7 +1723,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const fieldName = settingsAction === 'discussions' ? 'has_discussions' : 'has_projects';
             print(`system: checking current ${settingsAction} configuration...`);
             try {
-                const checkRes = await fetch(repoApiBase, {
+                const checkRes = await secureFetch(repoApiBase, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1735,7 +1736,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 const newState = !currentState;
 
                 print(`system: ${newState ? 'enabling' : 'disabling'} ${settingsAction}...`);
-                const patchRes = await fetch(repoApiBase, {
+                const patchRes = await secureFetch(repoApiBase, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1764,7 +1765,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
             print("system: checking current visibility state...");
             try {
-                const checkRes = await fetch(repoApiBase, {
+                const checkRes = await secureFetch(repoApiBase, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1952,7 +1953,7 @@ const githubTool = {
             print("system: validating operational access token with GitHub cloud gateway...");
 
             try {
-                const res = await fetch('https://api.github.com/user', {
+                const res = await secureFetch('https://api.github.com/user', {
                     headers: {
                         'Authorization': `Bearer ${value}`,
                         'Accept': 'application/vnd.github+json'
@@ -2023,7 +2024,7 @@ const githubTool = {
             print(`system: checking if repository '${sanitizeInputString(value)}' exists under @${sanitizeInputString(username)}...`);
 
             try {
-                const checkRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(value)}`, {
+                const checkRes = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(value)}`, {
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Accept': 'application/vnd.github+json'
@@ -2067,7 +2068,7 @@ const githubTool = {
             print(`system: creating private repository '${sanitizeInputString(repoToCreate)}' automatically on GitHub...`);
 
             try {
-                const createRes = await fetch('https://api.github.com/user/repos', {
+                const createRes = await secureFetch('https://api.github.com/user/repos', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studio Argon2id Smoke Test</title>
+</head>
+<body>
+<pre id="output">Running…</pre>
+<script>
+(() => {
+  const output = document.getElementById('output');
+  const expected = '376a808a9b5601bfcc3816459af6c0cc25b8b073aadb4b059fd89fa8ff59ed01';
+  const worker = new Worker('../argon2-worker.js');
+  const requestId = 1;
+  const salt = Uint8Array.from(Array.from({ length: 32 }, (_, i) => i));
+  const timeout = setTimeout(() => {
+    worker.terminate();
+    output.textContent = 'FAIL: worker timeout';
+  }, 30000);
+
+  worker.addEventListener('message', (event) => {
+    const data = event.data || {};
+    if (data.requestId !== requestId) return;
+    clearTimeout(timeout);
+    worker.terminate();
+
+    if (!data.ok) {
+      output.textContent = `FAIL: ${data.error || 'unknown error'}`;
+      return;
+    }
+
+    const bytes = new Uint8Array(data.key);
+    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+    output.textContent = hex === expected
+      ? 'PASS: Argon2id vector matched.'
+      : `FAIL: expected ${expected}\nreceived ${hex}`;
+  });
+
+  worker.addEventListener('error', (event) => {
+    clearTimeout(timeout);
+    worker.terminate();
+    output.textContent = `FAIL: ${event.message || 'worker error'}`;
+  });
+
+  worker.postMessage({
+    requestId,
+    password: 'StudioTest!',
+    salt: salt.buffer,
+    parallelism: 1,
+    iterations: 2,
+    memorySize: 1024,
+    hashLength: 32
+  }, [salt.buffer]);
+})();
+</script>
+</body>
+</html>

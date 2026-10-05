@@ -229,8 +229,8 @@ body.theme-inverse .studio-session-dialog {
 }
 
 .studio-session-actions button:hover {
-    background: var(--text-color);
-    color: var(--bg-color);
+    background: currentColor;
+    color: #000;
 }
 
 @media (max-width: 640px) {
