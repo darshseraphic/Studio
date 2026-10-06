@@ -1,6 +1,6 @@
 import { openExternalUrl } from './network-security.js';
 import { networkTool } from './network.js';
-import { getUnlockedUsernameSync } from './session-vault.js';
+import { getUnlockedUsernameSync, getWorkspaceStateSync } from './session-vault.js';
 
 const outputDiv = document.getElementById('output');
 const cmdInput = document.getElementById('cmd-input');
@@ -22,7 +22,7 @@ export const registry = {};
 registry['network'] = networkTool;
 
 export function savePathState() {
-    if (localStorage.getItem('repository')) {
+    if (getWorkspaceStateSync().repository) {
         localStorage.setItem('current_path', JSON.stringify(currentPath));
     } else {
         localStorage.removeItem('current_path');
@@ -31,8 +31,9 @@ export function savePathState() {
 
 export function getSystemPrompt() {
     const username = getUnlockedUsernameSync() || 'guest';
-    const repo = localStorage.getItem('repository') || '';
-    const githubActive = localStorage.getItem('github_active') === 'true';
+    const workspace = getWorkspaceStateSync();
+    const repo = workspace.repository;
+    const githubActive = workspace.githubActive;
     let pathStr = '';
 
     if (repo) {

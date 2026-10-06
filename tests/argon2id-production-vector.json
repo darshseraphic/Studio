@@ -1,0 +1,13 @@
+{
+  "algorithm": "Argon2id",
+  "version": 19,
+  "parameters": {
+    "memoryKiB": 131072,
+    "iterations": 4,
+    "parallelism": 1,
+    "hashLength": 32
+  },
+  "password": "StudioTest!",
+  "saltHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "expectedHex": "3fa7c23ef7dfac3e3f6f3ca13987c1ca252b5ac36dc0d5dc01a617aa0fcf0a20"
+}

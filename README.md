@@ -4,11 +4,35 @@ A comprehensive, production-grade technical manual and operational guide for the
 
 ## Security Architecture
 
-Studio now routes application API traffic through a centralized `network-security.js` gateway. API requests are restricted to the documented Studio service origins, require HTTPS (with localhost HTTP allowed only for local development), omit browser credentials, send no referrer, reject redirects, and time out after a bounded interval by default.
+Studio routes application API traffic through the centralized `network-security.js` gateway. API requests are restricted to the documented Studio service origins, require HTTPS, omit browser credentials, send no referrer, reject redirects, and use a hard-bounded timeout: callers may request a smaller timeout, but the effective timeout can never exceed 20 seconds. The generic external-navigation validator accepts `http://localhost`, `127.0.0.1`, or `[::1]` for local development; the API gateway still requires an explicitly allowlisted origin, so localhost HTTP is not an allowed API origin by default.
 
-External browser navigation from the `open` command is handled separately through the same security module. It rejects non-web URL schemes, embedded credentials, and non-local HTTP destinations before opening a new tab with `noopener,noreferrer`.
+External browser navigation from the `open` command is handled separately through the same security module. It rejects non-web URL schemes, embedded credentials, and non-local HTTP destinations before opening a new tab. The navigation target is opened with an opener severed before external navigation is committed.
 
-The HTML Content Security Policy also keeps `connect-src` aligned with the API allowlist and disables frames and plugin/object embedding. The GitHub session remains protected by the existing encrypted session vault; the Argon2id implementation is currently loaded from the pinned `hash-wasm@4.12.0` CDN and is intentionally retained in the CSP until the dependency is bundled locally in the next security phase.
+The HTML Content Security Policy keeps `connect-src` aligned with the API allowlist, disables plugin/object embedding, and limits workers to the application origin. The editor preview currently uses a narrow `frame-src 'self' data:` policy because its preview wrapper embeds repository content through a `data:` iframe. That iframe is sandboxed with `allow-scripts` only and does not receive `allow-same-origin`, forms, popups, or top-navigation privileges. Network capabilities of repository-controlled preview code remain an explicit boundary for the upcoming Editor/Preview security phase.
+
+GitHub workspace state is consolidated into the encrypted session envelope. The application does not persist `repository` or `github_active` as standalone plaintext GitHub state. Unlocking verifies the token at unlock/first-use time against GitHub `/user` and requires both the immutable numeric user ID and login name to match the encrypted session. A mismatch immediately locks the vault and clears Studio's in-memory GitHub workspace/navigation state. This is unlock-time/first-use validation, not continuous background token validation; an unlocked token remains in memory until lock/logout or an explicit failure path.
+
+## Argon2id security boundary
+
+GitHub session key derivation runs inside a dedicated same-origin Web Worker. The worker enforces Argon2id v1.3 with the production policy below; the caller cannot weaken these parameters:
+
+```text
+Algorithm:   Argon2id
+Version:     0x13 / Argon2 v1.3
+Memory:      131072 KiB / 128 MiB
+Iterations:  4
+Parallelism: 1
+Output:      32 bytes
+Salt:        32 bytes
+```
+
+The worker first loads the same-origin `vendor/argon2.umd.min.js` provider and verifies that `hashwasm.argon2id` is callable. Only when that local load or API validation fails does it try the exact pinned `hash-wasm@4.12.0` jsDelivr provider. If both fail provider validation, derivation fails closed. The worker also wipes password, salt, provider-result, and failed handoff buffers on its side. The key handoff is made from a separate copy: the worker wipes the provider-owned result before transferring the copy, then the transferred buffer is detached from the worker.
+
+The current delivery environment did not contain `vendor/argon2.umd.min.js`, so local-provider selection and its artifact SHA-256 could not be truthfully verified in this build. The project includes `scripts/vendor-argon2-provider.sh` to vendor exactly `hash-wasm@4.12.0/dist/argon2.umd.min.js`, preserve the MIT license, and write `vendor/argon2.umd.min.js.sha256`. The local-provider integration test deliberately reports `BLOCKED` until that exact artifact is present; no alternate KDF or substitute provider is used.
+
+### Sensitive buffer cleanup
+
+The session vault wipes temporary plaintext byte arrays after AES-GCM encryption/decryption and clears its in-memory session key and session object on lock. Browser JavaScript cannot guarantee zeroization of immutable strings or copies held by the browser/runtime, so these measures are best-effort memory hygiene rather than a hardware-enforced memory isolation guarantee.
 
 ## Executive Architecture Overview
 
@@ -45,7 +69,7 @@ The Bhagavad Geeta Reader allows users to explore chapters and individual shloks
 * **Description**: Enters the Bhagavad Geeta interactive sub-terminal mode.
 * **Step-by-Step Execution Flow**:
   1. `onEnter()` lifecycle hook is triggered by the terminal runtime.
-  2. Resolves the active user identity from `localStorage.getItem('github_username')` (defaults to `'guest'` if null).
+  2. Resolves the active user identity from the unlocked encrypted Studio session (defaults to `'guest'` while locked).
   3. Updates prompt context via `setMode('bhagvad', getGeetaPrompt())`.
   4. Displays system initialization headers and usage instructions.
 
@@ -100,7 +124,7 @@ The Holy Bible Reader enables fetching specific verses across various translatio
 * **Description**: Switches session context to the Bible Reader mode.
 * **Step-by-Step Execution Flow**:
   1. Executes `onEnter()` hook.
-  2. Fetches `github_username` from local storage to generate the interactive prompt string.
+  2. Resolves the active username from the unlocked encrypted Studio session to generate the interactive prompt string.
   3. Sets active mode using `setMode('bible', getBiblePrompt())`.
   4. Displays welcome banner and command help hints.
 
@@ -304,9 +328,9 @@ A full virtual filesystem interface and cloud sync manager integrated with the o
 
 * **Context Prompt**: `${username}/github${repository}${path}>`
 * **State Registers**:
-  * `localStorage['user']`: Stores GitHub Personal Access Authorization Token.
-  * `localStorage['github_username']`: Stores active GitHub account user handle.
-  * `localStorage['repository']`: Stores currently bound active workspace repository.
+  * Encrypted session envelope: stores the GitHub token, verified identity, session ID, repository binding, activity state, and creation metadata.
+  * In-memory session: holds the decrypted session only while unlocked; locking clears the token-bearing session object and cryptographic key from Studio memory.
+  * Active GitHub workspace state (`repository` + `githubActive`) is stored inside the encrypted session envelope; no GitHub credential or workspace-binding flag is kept in plaintext browser storage.
   * `fileBuffers`: In-memory volatile dictionary caching active local file modifications.
   * `virtualDirectories`: Set tracking locally created directory paths.
 
@@ -535,6 +559,7 @@ github           run/[file_name]                   Launch isolated sandbox visua
 github           issues                            List repository issues
 github           issues/fixed/[num]/"msg"          Post comment and close issue
 github           settings/[action]                 Configure repository branch, visibility, etc.
+github           vscode                            Open vscode.dev in a new browser tab
 github           exit / [username]/                Unbind repository / exit workspace
 ===================================================================================================
 ```
@@ -550,18 +575,21 @@ github           exit / [username]/                Unbind repository / exit work
 | **Bible Reader** | `error: invalid format. please use book/chapter:verse` | Missing colon (`:`) or missing chapter/verse segment. | Format passage reference as `[book]/[chapter]:[verse]` (e.g., `john/3:16`). |
 | **Calculator** | `division by zero complex boundaries` | Attempted division where denominator magnitude equals zero ($c^2 + d^2 = 0$). | Check input expression limits and complex boundary values. |
 | **Calculator** | `quadratic systems require exactly three scalar coefficient variables` | `solve:quadratic()` received an incorrect number of coefficients. | Provide exactly three numeric coefficients: `solve:quadratic(a, b, c)`. |
-| **GitHub** | `error: authentication token signature missing` | Authorization token is missing from local storage key `'user'`. | Authenticate by saving a valid GitHub token in login settings. |
+| **GitHub** | `error: authentication token signature missing` | No unlocked verified authorization session is available. | Use `github` and authenticate with `login/token`, then unlock the encrypted session when prompted. |
 | **GitHub** | `error: layout configuration rejected. extension... breaks systemic syntax rule maps` | Target file extension is not listed in `VALID_EXTENSIONS`. | Save or rename the file using a supported plaintext format extension. |
-## Argon2id session provider
+## Argon2id vendoring
 
-GitHub session key derivation now runs behind a dedicated same-origin Web Worker. The worker is terminated after each derivation so its temporary Argon2 memory is not retained across session operations. The session format remains Argon2id v1.3-compatible with 128 MiB memory, 4 iterations, parallelism 1, and a 32-byte derived key.
+Run `scripts/vendor-argon2-provider.sh` on a network-enabled development machine to fetch the exact `hash-wasm@4.12.0` npm package and install only its `dist/argon2.umd.min.js` provider. The script checks the package version and records the provider SHA-256 in `vendor/argon2.umd.min.js.sha256`.
 
-The current worker bridge still loads the pinned `hash-wasm@4.12.0` provider from jsDelivr. This is intentionally isolated to one worker file so the remaining migration is a drop-in replacement with a locally bundled provider; no session-vault API changes are required.
+The production local-provider integration test requires the artifact and verifies `provider = local` plus the Argon2id v1.3 production vector. Until the artifact is present, the worker's exact pinned CDN fallback is available for compatibility, but the build is not considered locally bundled.
 
-### Vendoring the Argon2id implementation
 
-The Argon2id worker prefers a same-origin `vendor/argon2.umd.min.js` file. Run
-`scripts/vendor-argon2-provider.sh` on a machine with npm access to fetch the
-pinned `hash-wasm@4.12.0` package, copy only the Argon2 bundle, and preserve
-its license. Until that file is present, the worker uses the already-pinned
-jsDelivr fallback so existing sessions do not regress.
+## Security hardening
+
+GitHub credentials are stored only inside the encrypted Studio session envelope while locked. The vault exposes `unlockAndValidateStoredSession(validate)` for operational stored-session unlock and rejects a missing validator. Decryption remains temporary until the GitHub path performs `GET /user` validation and matches both the immutable numeric GitHub user ID and the stored login name; only then is the session and key committed to operational memory.
+
+GitHub API requests are routed through the centralized network security gateway. An HTTP 401 response from an operational GitHub request immediately locks the session and clears in-memory authorization/navigation state. This is unlock-time validation plus failure-triggered invalidation, not continuous background token validation.
+
+Repository previews are rendered inside `sandbox="allow-scripts"` iframes without `allow-same-origin`, `allow-forms`, or `allow-popups`. The preview document receives its own restrictive CSP that blocks network connections, frames, workers, objects, and external resources while preserving inline script execution for local previews.
+
+Run `permissions` inside the GitHub workspace to perform safe read-only capability probes and display the fine-grained permission profile required by Studio. Runtime probes are GET-only and report the repository role plus GitHub `X-Accepted-GitHub-Permissions` metadata when available. Write requirements are documented rather than proven by mutation: repository contents writes use `Contents: write`; workflow files require `Contents: write` plus `Workflows: write`; issue writes use `Issues: write`, while shared issue/Pull Request comment operations may use `Issues: write` or `Pull requests: write`; repository administration/update uses `Administration: write`; repository creation for Studio uses `POST /user/repos` and accepts `Administration: write OR Repository creation: write`. General GitHub endpoints may document additional permission alternatives separately; those are not part of Studio’s capability matrix. The command never performs write operations merely to test a token.

@@ -4,19 +4,24 @@ const LEGACY_USERNAME_KEY = 'github_username';
 const SESSION_AAD = new TextEncoder().encode('studio-github-session-v1');
 
 const ARGON2_CONFIG = Object.freeze({
-    version: 1,
+    version: 0x13, // Argon2 v1.3
+    algorithm: 'Argon2id',
     memorySize: 131072, // KiB = 128 MiB
     iterations: 4,
     parallelism: 1,
     hashLength: 32,
-    outputType: 'binary'
+    outputType: 'binary',
+    saltLength: 32
 });
+const ARGON2_DERIVATION_TIMEOUT_MS = 120000;
 
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 32;
 const ARGON2_WORKER_PATH = './argon2-worker.js';
 
 let unlockedSession = null;
+let unlockedSessionKey = null;
+let unlockedSessionEnvelope = null;
 let argon2RequestCounter = 0;
 
 function assertSecureContext() {
@@ -190,13 +195,15 @@ async function deriveKeyBytes(password, salt) {
 
     const worker = createArgon2Worker();
     const requestId = ++argon2RequestCounter;
+    const passwordBytes = new TextEncoder().encode(password);
     const saltCopy = new Uint8Array(salt);
 
     return new Promise((resolve, reject) => {
         let settled = false;
+        let buffersTransferred = false;
         const timeoutId = window.setTimeout(() => {
             fail(new Error('Argon2id derivation timed out.'));
-        }, 120000);
+        }, ARGON2_DERIVATION_TIMEOUT_MS);
         const cleanup = () => {
             window.clearTimeout(timeoutId);
             worker.removeEventListener('message', handleMessage);
@@ -206,6 +213,10 @@ async function deriveKeyBytes(password, salt) {
             if (settled) return;
             settled = true;
             cleanup();
+            if (!buffersTransferred) {
+                if (passwordBytes.byteLength > 0) passwordBytes.fill(0);
+                if (saltCopy.byteLength > 0) saltCopy.fill(0);
+            }
             try { worker.terminate(); } catch { /* best-effort cleanup */ }
             reject(errorValue instanceof Error ? errorValue : new Error('Argon2id worker failed.'));
         };
@@ -235,15 +246,26 @@ async function deriveKeyBytes(password, salt) {
 
         worker.addEventListener('message', handleMessage);
         worker.addEventListener('error', handleError);
-        worker.postMessage({
-            requestId,
-            password,
-            salt: saltCopy.buffer,
-            parallelism: ARGON2_CONFIG.parallelism,
-            iterations: ARGON2_CONFIG.iterations,
-            memorySize: ARGON2_CONFIG.memorySize,
-            hashLength: ARGON2_CONFIG.hashLength
-        }, [saltCopy.buffer]);
+        try {
+            worker.postMessage({
+                requestId,
+                password: passwordBytes.buffer,
+                salt: saltCopy.buffer,
+                includeProvider: false,
+                kdf: {
+                    algorithm: ARGON2_CONFIG.algorithm,
+                    version: ARGON2_CONFIG.version,
+                    memorySize: ARGON2_CONFIG.memorySize,
+                    iterations: ARGON2_CONFIG.iterations,
+                    parallelism: ARGON2_CONFIG.parallelism,
+                    hashLength: ARGON2_CONFIG.hashLength,
+                    outputType: ARGON2_CONFIG.outputType
+                }
+            }, [passwordBytes.buffer, saltCopy.buffer]);
+            buffersTransferred = true;
+        } catch (errorValue) {
+            fail(errorValue);
+        }
     });
 }
 
@@ -257,17 +279,10 @@ async function importAesKey(rawKey) {
     );
 }
 
-export async function encryptSession(session, password) {
-    assertSecureContext();
-    validateSessionPassword(password);
-
-    const salt = crypto.getRandomValues(new Uint8Array(32));
+async function encryptSessionWithKey(session, key, kdfMetadata) {
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const rawKey = await deriveKeyBytes(password, salt);
-
+    const plaintext = new TextEncoder().encode(JSON.stringify(session));
     try {
-        const key = await importAesKey(rawKey);
-        const plaintext = new TextEncoder().encode(JSON.stringify(session));
         const ciphertext = await crypto.subtle.encrypt(
             {
                 name: 'AES-GCM',
@@ -281,14 +296,7 @@ export async function encryptSession(session, password) {
 
         return {
             version: 1,
-            kdf: {
-                name: 'Argon2id',
-                memoryKiB: ARGON2_CONFIG.memorySize,
-                iterations: ARGON2_CONFIG.iterations,
-                parallelism: ARGON2_CONFIG.parallelism,
-                hashLength: ARGON2_CONFIG.hashLength,
-                salt: bytesToBase64(salt)
-            },
+            kdf: { ...kdfMetadata },
             cipher: {
                 name: 'AES-GCM-256',
                 iv: bytesToBase64(iv),
@@ -298,7 +306,39 @@ export async function encryptSession(session, password) {
             }
         };
     } finally {
+        plaintext.fill(0);
+    }
+}
+
+async function deriveSessionKey(password, salt) {
+    const rawKey = await deriveKeyBytes(password, salt);
+    try {
+        return await importAesKey(rawKey);
+    } finally {
         rawKey.fill(0);
+    }
+}
+
+export async function encryptSession(session, password) {
+    assertSecureContext();
+    validateSessionPassword(password);
+
+    const salt = crypto.getRandomValues(new Uint8Array(32));
+    try {
+        const key = await deriveSessionKey(password, salt);
+        const kdfMetadata = {
+        name: ARGON2_CONFIG.algorithm,
+        version: ARGON2_CONFIG.version,
+        memoryKiB: ARGON2_CONFIG.memorySize,
+        iterations: ARGON2_CONFIG.iterations,
+        parallelism: ARGON2_CONFIG.parallelism,
+        hashLength: ARGON2_CONFIG.hashLength,
+        salt: bytesToBase64(salt)
+    };
+
+        return await encryptSessionWithKey(session, key, kdfMetadata);
+    } finally {
+        salt.fill(0);
     }
 }
 
@@ -306,18 +346,32 @@ export async function decryptSession(envelope, password) {
     assertSecureContext();
     validateSessionPassword(password);
 
-    if (!envelope || envelope.version !== 1 || envelope.kdf?.name !== 'Argon2id' || envelope.cipher?.name !== 'AES-GCM-256') {
+    if (!envelope || envelope.version !== 1 || envelope.kdf?.name !== ARGON2_CONFIG.algorithm || envelope.cipher?.name !== 'AES-GCM-256') {
         throw new Error('unsupported encrypted session format.');
+    }
+
+    const storedArgonVersion = envelope.kdf.version === undefined ? ARGON2_CONFIG.version : envelope.kdf.version;
+    if (storedArgonVersion !== ARGON2_CONFIG.version ||
+        envelope.kdf.memoryKiB !== ARGON2_CONFIG.memorySize ||
+        envelope.kdf.iterations !== ARGON2_CONFIG.iterations ||
+        envelope.kdf.parallelism !== ARGON2_CONFIG.parallelism ||
+        envelope.kdf.hashLength !== ARGON2_CONFIG.hashLength ||
+        envelope.cipher.tagLength !== 128) {
+        throw new Error('stored session cryptographic parameters do not match the active security policy.');
     }
 
     const salt = base64ToBytes(envelope.kdf.salt);
     const iv = base64ToBytes(envelope.cipher.iv);
     const ciphertext = base64ToBytes(envelope.cipher.ciphertext);
-    const rawKey = await deriveKeyBytes(password, salt);
+    if (salt.length !== 32 || iv.length !== 12 || ciphertext.length < 16) {
+        throw new Error('stored session envelope contains invalid binary parameters.');
+    }
 
+    let key = null;
+    let plaintext = null;
     try {
-        const key = await importAesKey(rawKey);
-        const plaintext = await crypto.subtle.decrypt(
+        key = await deriveSessionKey(password, salt);
+        plaintext = new Uint8Array(await crypto.subtle.decrypt(
             {
                 name: 'AES-GCM',
                 iv,
@@ -326,31 +380,175 @@ export async function decryptSession(envelope, password) {
             },
             key,
             ciphertext
-        );
+        ));
         const session = JSON.parse(new TextDecoder().decode(plaintext));
 
         if (!session || typeof session.token !== 'string' || typeof session.githubUsername !== 'string') {
             throw new Error('decrypted session payload is invalid.');
         }
-        return session;
+        return { session, key };
     } catch (errorValue) {
         if (errorValue instanceof SyntaxError) {
             throw new Error('decrypted session payload is invalid.');
         }
         throw new Error('unable to unlock the session with that password.');
     } finally {
-        rawKey.fill(0);
+        if (plaintext) plaintext.fill(0);
+        if (salt.byteLength > 0) salt.fill(0);
+        if (iv.byteLength > 0) iv.fill(0);
+        if (ciphertext.byteLength > 0) ciphertext.fill(0);
+    }
+}
+
+function createSessionId() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function clearLegacyGithubStorage() {
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
+    localStorage.removeItem(LEGACY_USERNAME_KEY);
+    localStorage.removeItem('repository');
+    localStorage.removeItem('github_active');
+}
+
+export function hasLegacyGithubSession() {
+    return !!(localStorage.getItem(LEGACY_TOKEN_KEY) && localStorage.getItem(LEGACY_USERNAME_KEY));
+}
+
+export async function migrateLegacyGithubSession(identityVerifier = null) {
+    if (hasStoredSession() || !hasLegacyGithubSession()) return getUnlockedSession();
+
+    const legacyToken = localStorage.getItem(LEGACY_TOKEN_KEY);
+    const legacyUsername = localStorage.getItem(LEGACY_USERNAME_KEY);
+    const legacyRepository = localStorage.getItem('repository') || '';
+    const password = await requestNewSessionPassword();
+
+    if (password === null) {
+        clearLegacyGithubStorage();
+        return null;
+    }
+
+    let verifiedIdentity = null;
+    try {
+        if (typeof identityVerifier !== 'function') {
+            throw new Error('legacy session migration requires verified GitHub identity metadata.');
+        }
+        verifiedIdentity = await identityVerifier(legacyToken, legacyUsername);
+        if (!verifiedIdentity || typeof verifiedIdentity.githubUserId !== 'string' || !verifiedIdentity.githubUserId ||
+            typeof verifiedIdentity.githubUsername !== 'string' || !verifiedIdentity.githubUsername) {
+            throw new Error('legacy session identity verification returned incomplete metadata.');
+        }
+        if (verifiedIdentity.githubUsername !== legacyUsername) {
+            throw new Error('legacy session identity verification did not match the stored username.');
+        }
+
+        const session = {
+            token: legacyToken,
+            githubUserId: verifiedIdentity.githubUserId,
+            githubUsername: verifiedIdentity.githubUsername,
+            sessionId: createSessionId(),
+            repository: legacyRepository,
+            githubActive: true,
+            createdAt: new Date().toISOString(),
+            migrated: true
+        };
+
+        await saveSession(session, password);
+        clearLegacyGithubStorage();
+        return getUnlockedSession();
+    } catch (errorValue) {
+        clearLegacyGithubStorage();
+        throw new Error(`secure session migration failed: ${errorValue instanceof Error ? errorValue.message : 'unknown cryptographic failure'}`);
     }
 }
 
 export async function saveSession(session, password) {
-    const envelope = await encryptSession(session, password);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(envelope));
-    unlockedSession = structuredClone(session);
-    return unlockedSession;
+    assertSecureContext();
+    validateSessionPassword(password);
+
+    const salt = crypto.getRandomValues(new Uint8Array(32));
+    const rawKey = await deriveKeyBytes(password, salt);
+    try {
+        const key = await importAesKey(rawKey);
+        const kdfMetadata = {
+            name: ARGON2_CONFIG.algorithm,
+            version: ARGON2_CONFIG.version,
+            memoryKiB: ARGON2_CONFIG.memorySize,
+            iterations: ARGON2_CONFIG.iterations,
+            parallelism: ARGON2_CONFIG.parallelism,
+            hashLength: ARGON2_CONFIG.hashLength,
+            salt: bytesToBase64(salt)
+        };
+        const envelope = await encryptSessionWithKey(session, key, kdfMetadata);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(envelope));
+        unlockedSession = structuredClone(session);
+        unlockedSessionKey = key;
+        unlockedSessionEnvelope = envelope;
+        return getUnlockedSession();
+    } finally {
+        rawKey.fill(0);
+        salt.fill(0);
+    }
 }
 
-export async function unlockStoredSession() {
+async function persistUnlockedSession() {
+    if (!unlockedSession || !unlockedSessionKey || !unlockedSessionEnvelope) {
+        throw new Error('encrypted session is locked or unavailable.');
+    }
+
+    const envelope = await encryptSessionWithKey(
+        unlockedSession,
+        unlockedSessionKey,
+        unlockedSessionEnvelope.kdf
+    );
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(envelope));
+    unlockedSessionEnvelope = envelope;
+    return getUnlockedSession();
+}
+
+async function updateWorkspaceSession(patch) {
+    if (!unlockedSession) {
+        throw new Error('encrypted session is locked. unlock the session before updating its state.');
+    }
+    unlockedSession = {
+        ...unlockedSession,
+        repository: typeof patch.repository === 'string' ? patch.repository : unlockedSession.repository || '',
+        githubActive: patch.githubActive === undefined ? unlockedSession.githubActive === true : !!patch.githubActive
+    };
+    return await persistUnlockedSession();
+}
+
+export function getWorkspaceStateSync() {
+    if (!unlockedSession) {
+        return { repository: '', githubActive: false };
+    }
+    return {
+        repository: typeof unlockedSession.repository === 'string' ? unlockedSession.repository : '',
+        githubActive: unlockedSession.githubActive === true
+    };
+}
+
+export async function setWorkspaceState(repository = '', githubActive = true) {
+    if (!unlockedSession) {
+        throw new Error('encrypted GitHub session is locked. unlock it before changing workspace state.');
+    }
+    const normalizedRepository = typeof repository === 'string' ? repository : '';
+    return await updateWorkspaceSession({
+        repository: normalizedRepository,
+        githubActive: !!githubActive
+    });
+}
+
+export async function clearWorkspaceState() {
+    return await setWorkspaceState('', false);
+}
+
+export async function unlockAndValidateStoredSession(validate) {
+    if (typeof validate !== 'function') {
+        throw new TypeError('validated session unlock requires an identity validator.');
+    }
+
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
 
@@ -359,17 +557,29 @@ export async function unlockStoredSession() {
         envelope = JSON.parse(raw);
     } catch {
         localStorage.removeItem(STORAGE_KEY);
-        unlockedSession = null;
+        lockSession();
         throw new Error('stored session envelope is corrupt and has been cleared.');
     }
 
     const password = await requestPassword({ mode: 'unlock' });
     if (password === null) return null;
 
+    let decrypted = null;
     try {
-        unlockedSession = await decryptSession(envelope, password);
-        return structuredClone(unlockedSession);
-    } catch (errorValue) {
+        // The decrypted session/key are temporary locals. They MUST NOT be copied
+        // into operational state until the validator has succeeded.
+        decrypted = await decryptSession(envelope, password);
+        await validate(structuredClone(decrypted.session));
+
+        unlockedSession = structuredClone(decrypted.session);
+        unlockedSessionKey = decrypted.key;
+        unlockedSessionEnvelope = envelope;
+        return getUnlockedSession();
+    } catch {
+        unlockedSession = null;
+        unlockedSessionKey = null;
+        unlockedSessionEnvelope = null;
+        decrypted = null;
         return null;
     }
 }
@@ -388,13 +598,14 @@ export function hasStoredSession() {
 
 export function lockSession() {
     unlockedSession = null;
+    unlockedSessionKey = null;
+    unlockedSessionEnvelope = null;
 }
 
 export function clearSession() {
-    unlockedSession = null;
+    lockSession();
     localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(LEGACY_TOKEN_KEY);
-    localStorage.removeItem(LEGACY_USERNAME_KEY);
+    clearLegacyGithubStorage();
 }
 
 export async function requestNewSessionPassword() {

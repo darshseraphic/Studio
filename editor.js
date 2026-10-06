@@ -1,6 +1,6 @@
-import { secureFetch } from './network-security.js';
 import { registerTool, print, setMode, getSystemPrompt, fileBuffers, getFullFilePath } from './main.js';
-import { getUnlockedSession } from './session-vault.js';
+import { getUnlockedSession, getWorkspaceStateSync } from './session-vault.js';
+import { buildHtmlPreviewDocument, buildTextPreviewDocument, openSandboxPreview } from './preview-security.js';
 
 let editingFile = "";
 let editorLines = [];
@@ -277,7 +277,7 @@ registerTool('save', {
         fileBuffers[editingFile] = [...editorLines];
 
         if (editingFile === 'description') {
-            const activeRepo = localStorage.getItem('repository');
+            const activeRepo = getWorkspaceStateSync().repository;
             if (!activeRepo) {
                 print("error: no active repository detected.");
                 setMode("main", getSystemPrompt());
@@ -293,7 +293,8 @@ registerTool('save', {
             }
             try {
                 print("system: streaming description updates to remote repository profile...");
-                const res = await secureFetch(`https://api.github.com/repos/${username}/${activeRepo}`, {
+                const { githubFetch } = await import('./github.js');
+                const res = await githubFetch(`https://api.github.com/repos/${username}/${activeRepo}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -332,6 +333,16 @@ registerTool('save', {
     handleInput: async () => {}
 });
 
+
+function escapePreviewText(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 registerTool('run', {
     onEnter: async () => {
         if (editorLines.length === 0) {
@@ -339,56 +350,17 @@ registerTool('run', {
             setMode("main", getSystemPrompt());
             return;
         }
-        print("system: packing components into localized isolated sandbox iframe layer...");
+        print("system: packing components into isolated preview sandbox...");
         const codeStructure = editorLines.join('\n');
-        const escapedContent = btoa(unescape(encodeURIComponent(codeStructure)));
         const isHtml = editingFile && editingFile.toLowerCase().endsWith('.html');
-        
-        let sandboxWrapper = "";
-        if (isHtml) {
-            sandboxWrapper = `
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Application Sandbox Preview</title>
-                    <style>
-                        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
-                        iframe { border: none; width: 100%; height: 100%; display: block; }
-                    </style>
-                </head>
-                <body>
-                    <iframe sandbox="allow-scripts" src="data:text/html;base64,${escapedContent}"></iframe>
-                </body>
-                </html>
-            `;
-        } else {
-            sandboxWrapper = `
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Universal Preview - ${editingFile || 'Untitled Buffer'}</title>
-                    <style>
-                        html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #121212; color: #e0e0e0; font-family: 'Courier New', Courier, monospace; }
-                        .header { background: #1a1a1a; padding: 10px 20px; border-bottom: 1px solid #333; font-size: 12px; color: #888; }
-                        pre { margin: 0; padding: 20px; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.6; }
-                    </style>
-                </head>
-                <body>
-                    <div class="header">Target Workspace Node: ${editingFile || 'Untitled plain text snippet'} | Runtime View</div>
-                    <pre id="output-content"></pre>
-                    <script>
-                        document.getElementById('output-content').textContent = decodeURIComponent(escape(atob('${escapedContent}')));
-                    </script>
-                </body>
-                </html>
-            `;
+        const sandboxWrapper = isHtml
+            ? buildHtmlPreviewDocument(codeStructure)
+            : buildTextPreviewDocument(editingFile || 'Untitled Buffer', codeStructure);
+        try {
+            openSandboxPreview(sandboxWrapper);
+        } catch (errorValue) {
+            print(`error: ${errorValue instanceof Error ? errorValue.message : 'preview could not be opened securely.'}`);
         }
-
-        const blob = new Blob([sandboxWrapper], { type: 'text/html' });
-        const blobURL = URL.createObjectURL(blob);
-        window.open(blobURL, '_blank', 'noopener,noreferrer');
         setMode("main", getSystemPrompt());
     },
     handleInput: async () => {}

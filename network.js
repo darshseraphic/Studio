@@ -33,7 +33,7 @@ export const networkTool = {
     },
 
     async pushLogToGitHub(logEntry) {
-        const repo = localStorage.getItem('repository');
+        const { repository: repo } = (await import('./session-vault.js')).getWorkspaceStateSync();
         if (!repo) return;
 
         try {

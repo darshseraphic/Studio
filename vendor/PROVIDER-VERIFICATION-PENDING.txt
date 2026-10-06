@@ -1,0 +1,5 @@
+Required production artifact: vendor/argon2.umd.min.js
+Source: hash-wasm@4.12.0 / dist/argon2.umd.min.js
+Status: NOT PRESENT IN THIS BUILD ENVIRONMENT
+SHA-256: NOT RECORDED (artifact bytes unavailable)
+Run scripts/vendor-argon2-provider.sh on a network-enabled build machine, then run tests/argon2id-local-provider-integration.mjs.

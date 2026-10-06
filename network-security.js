@@ -9,6 +9,8 @@ const ALLOWED_API_ORIGINS = Object.freeze([
 
 const ALLOWED_API_ORIGIN_SET = new Set(ALLOWED_API_ORIGINS);
 const DEFAULT_TIMEOUT_MS = 20000;
+const MIN_TIMEOUT_MS = 1000;
+const MAX_TIMEOUT_MS = 20000;
 const GITHUB_API_ORIGIN = 'https://api.github.com';
 const LOCAL_HTTP_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
@@ -68,7 +70,8 @@ export async function secureFetch(target, options = {}) {
     const url = validateApiUrl(target);
     const safeOptions = options && typeof options === 'object' ? options : {};
     const controller = new AbortController();
-    const timeoutMs = Number.isFinite(safeOptions.timeoutMs) ? Math.max(1000, safeOptions.timeoutMs) : DEFAULT_TIMEOUT_MS;
+    const requestedTimeout = Number.isFinite(safeOptions.timeoutMs) ? safeOptions.timeoutMs : DEFAULT_TIMEOUT_MS;
+    const timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, requestedTimeout));
     const cleanupExternalSignal = combineAbortSignals(safeOptions.signal, controller);
     const timeoutId = window.setTimeout(() => controller.abort(new DOMException('Network request timed out.', 'TimeoutError')), timeoutMs);
 
@@ -121,5 +124,7 @@ export const NETWORK_SECURITY_CONFIG = Object.freeze({
     allowedApiOrigins: [...ALLOWED_API_ORIGINS],
     githubApiOrigin: GITHUB_API_ORIGIN,
     defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
+    maxTimeoutMs: MAX_TIMEOUT_MS,
+    minTimeoutMs: MIN_TIMEOUT_MS,
     localDevelopmentHttpHosts: [...LOCAL_HTTP_HOSTS]
 });

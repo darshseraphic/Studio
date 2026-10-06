@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Studio Argon2id Smoke Test</title>
+  <title>Studio Argon2id Local Provider Smoke Test</title>
 </head>
 <body>
 <pre id="output">Running…</pre>
 <script>
 (() => {
   const output = document.getElementById('output');
-  const expected = '376a808a9b5601bfcc3816459af6c0cc25b8b073aadb4b059fd89fa8ff59ed01';
+  const expected = '3fa7c23ef7dfac3e3f6f3ca13987c1ca252b5ac36dc0d5dc01a617aa0fcf0a20';
   const worker = new Worker('../argon2-worker.js');
   const requestId = 1;
+  const password = new TextEncoder().encode('StudioTest!');
   const salt = Uint8Array.from(Array.from({ length: 32 }, (_, i) => i));
   const timeout = setTimeout(() => {
     worker.terminate();
     output.textContent = 'FAIL: worker timeout';
-  }, 30000);
+  }, 180000);
 
   worker.addEventListener('message', (event) => {
     const data = event.data || {};
@@ -29,11 +30,15 @@
       output.textContent = `FAIL: ${data.error || 'unknown error'}`;
       return;
     }
+    if (data.provider !== 'local') {
+      output.textContent = `FAIL: provider=${data.provider || 'unknown'}; expected local provider`;
+      return;
+    }
 
     const bytes = new Uint8Array(data.key);
     const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
     output.textContent = hex === expected
-      ? 'PASS: Argon2id vector matched.'
+      ? 'PASS: local Argon2id v1.3 production vector matched.'
       : `FAIL: expected ${expected}\nreceived ${hex}`;
   });
 
@@ -45,13 +50,19 @@
 
   worker.postMessage({
     requestId,
-    password: 'StudioTest!',
+    password: password.buffer,
     salt: salt.buffer,
-    parallelism: 1,
-    iterations: 2,
-    memorySize: 1024,
-    hashLength: 32
-  }, [salt.buffer]);
+    includeProvider: true,
+    kdf: {
+      algorithm: 'Argon2id',
+      version: 0x13,
+      memorySize: 131072,
+      iterations: 4,
+      parallelism: 1,
+      hashLength: 32,
+      outputType: 'binary'
+    }
+  }, [password.buffer, salt.buffer]);
 })();
 </script>
 </body>

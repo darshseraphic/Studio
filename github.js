@@ -1,4 +1,6 @@
 import { secureFetch } from './network-security.js';
+import { auditGithubPermissions } from './github-permissions.js';
+import { buildHtmlPreviewDocument, buildTextPreviewDocument, openSandboxPreview } from './preview-security.js';
 import {
     registerTool, print, getSystemPrompt, setMode, registry,
     currentPath, fileBuffers, virtualDirectories,
@@ -6,11 +8,12 @@ import {
 } from './main.js';
 
 import {
-    saveSession, unlockStoredSession, getUnlockedSession, getUnlockedUsernameSync,
-    hasStoredSession, lockSession, clearSession, requestNewSessionPassword
+    saveSession, unlockAndValidateStoredSession, getUnlockedSession, getUnlockedUsernameSync,
+    hasStoredSession, lockSession, clearSession, requestNewSessionPassword,
+    migrateLegacyGithubSession, hasLegacyGithubSession, clearLegacyGithubStorage, getWorkspaceStateSync,
+    setWorkspaceState, clearWorkspaceState
 } from './session-vault.js';
 
-let activeRepo = localStorage.getItem('repository') || '';
 let pendingRepoCreation = null;
 
 let pendingDeleteTarget = "";
@@ -30,55 +33,136 @@ function sanitizeInputString(str) {
     return str.trim().replace(/[<>'"\`]/g, '');
 }
 
+export async function githubFetch(target, options = {}) {
+    const response = await secureFetch(target, options);
+    if (response.status === 401) {
+        lockSession();
+        clearGithubAuthorizationMemory();
+        print('error: GitHub rejected the active credential with HTTP 401. session locked and in-memory authorization cleared.');
+    }
+    return response;
+}
+
 function getMemoryGithubSession() {
     return getUnlockedSession();
 }
 
+function getActiveRepositorySync() {
+    return getWorkspaceStateSync().repository;
+}
+
+async function fetchGithubProfile(token) {
+    const res = await githubFetch('https://api.github.com/user', {
+        method: 'GET',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github+json'
+        },
+        cache: 'no-store'
+    });
+    if (!res.ok) {
+        throw new Error(`GitHub credentials rejected with status ${res.status}.`);
+    }
+    const profile = await res.json();
+    if (!profile || !Number.isInteger(profile.id) || typeof profile.login !== 'string') {
+        throw new Error('GitHub identity response was malformed.');
+    }
+    return profile;
+}
+
+function clearGithubTransientState() {
+    pendingRepoCreation = null;
+    pendingDeleteTarget = '';
+    pendingDeleteType = '';
+    pendingRenameTarget = '';
+    pendingRenameType = '';
+    pendingVisibilityChange = '';
+    pendingSettingsRenameConfirm = false;
+    pendingSettingsRenameInput = false;
+    pendingSettingsRenameOldName = '';
+}
+
+function clearGithubAuthorizationMemory() {
+    lastValidatedSessionId = '';
+    clearGithubTransientState();
+    clearGithubWorkspaceMemory();
+}
+
+function clearGithubWorkspaceMemory() {
+    currentPath.length = 0;
+    virtualDirectories.clear();
+    savePathState();
+}
+
+async function verifyGithubSessionIdentity(session) {
+    if (!session?.token || !session?.githubUsername || !session?.githubUserId) {
+        throw new Error('stored GitHub session is missing its immutable identity binding.');
+    }
+    const profile = await fetchGithubProfile(session.token);
+    const idMatches = String(profile.id) === String(session.githubUserId);
+    const loginMatches = profile.login === session.githubUsername;
+    if (!idMatches || !loginMatches) {
+        throw new Error('verified GitHub identity does not match the stored session identity.');
+    }
+    return profile;
+}
+
+export async function unlockAndValidateGithubSession() {
+    return await unlockAndValidateStoredSession(async (candidate) => {
+        try {
+            await verifyGithubSessionIdentity(candidate);
+            lastValidatedSessionId = candidate.sessionId || '';
+        } catch (errorValue) {
+            // Validation happens before the vault commits operational session/key state.
+            // Clear GitHub navigation/workspace/transient authorization state on failure.
+            lockSession();
+            clearGithubAuthorizationMemory();
+            throw errorValue;
+        }
+    });
+}
+
 async function requireGithubSession() {
+
     const existing = getMemoryGithubSession();
-    if (existing) return existing;
-    if (!hasStoredSession()) return null;
-    return await unlockStoredSession();
-}
-
-function clearLegacyAuthStorage() {
-    localStorage.removeItem('user');
-    localStorage.removeItem('github_username');
-}
-
-async function migrateLegacyGithubSession() {
-    if (hasStoredSession()) return getMemoryGithubSession();
-
-    const legacyToken = localStorage.getItem('user');
-    const legacyUsername = localStorage.getItem('github_username');
-    if (!legacyToken || !legacyUsername) return null;
-
-    print('warning: legacy plaintext github session detected. secure migration is required before use.');
-    const password = await requestNewSessionPassword();
-
-    if (password === null) {
-        clearLegacyAuthStorage();
-        print('system: legacy plaintext github credentials were cleared. authenticate again with login/token.');
+    if (existing) {
+        return await validateUnlockedGithubSession(existing);
+    }
+    if (hasLegacyGithubSession()) {
+        const migrated = await migrateLegacyGithubSession(async (legacyToken, legacyUsername) => {
+            const profile = await fetchGithubProfile(legacyToken);
+            if (profile.login !== legacyUsername) {
+                throw new Error('legacy GitHub identity does not match the verified account.');
+            }
+            return { githubUserId: String(profile.id), githubUsername: profile.login };
+        });
+        if (migrated) return await validateUnlockedGithubSession(migrated);
         return null;
     }
+    if (!hasStoredSession()) return null;
+    const unlocked = await unlockAndValidateGithubSession();
+    if (!unlocked) return null;
+    return unlocked;
+}
 
-    const session = {
-        token: legacyToken,
-        githubUserId: '',
-        githubUsername: legacyUsername,
-        sessionId: crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join(''),
-        repository: localStorage.getItem('repository') || '',
-        githubActive: true,
-        createdAt: new Date().toISOString(),
-        migrated: true
-    };
+let lastValidatedSessionId = '';
+async function validateUnlockedGithubSession(session) {
+    if (!session?.token || !session?.githubUsername || !session?.githubUserId) {
+        lockSession();
+        clearGithubAuthorizationMemory();
+        print('error: unlocked session is missing a complete GitHub identity binding. session has been locked and in-memory authorization cleared.');
+        return null;
+    }
+    if (session.sessionId && session.sessionId === lastValidatedSessionId) return session;
 
     try {
-        await saveSession(session, password);
-        clearLegacyAuthStorage();
+        await verifyGithubSessionIdentity(session);
+        lastValidatedSessionId = session.sessionId || '';
         return session;
     } catch (errorValue) {
-        print(`error: secure session migration failed: ${errorValue instanceof Error ? errorValue.message : 'unknown cryptographic failure'}`);
+        lockSession();
+        clearGithubAuthorizationMemory();
+        print(`error: unable to validate the unlocked GitHub session: ${errorValue instanceof Error ? errorValue.message : 'network failure'}`);
         return null;
     }
 }
@@ -100,7 +184,7 @@ export async function fetchRepoTree(repoName, subDirectoryPath = '') {
     const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${cleanSubPath}`;
 
     try {
-        const res = await secureFetch(apiPath, {
+        const res = await githubFetch(apiPath, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -143,7 +227,7 @@ export async function fetchUserRepos() {
     }
 
     try {
-        const res = await secureFetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
+        const res = await githubFetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -172,7 +256,7 @@ export async function pushFileToGitHub(filePath, content, commitMessage = null) 
     const session = await requireGithubSession();
     const rawToken = session?.token;
     const rawUsername = session?.githubUsername;
-    const rawRepo = localStorage.getItem('repository');
+    const rawRepo = getActiveRepositorySync();
 
     if (!rawToken || !rawUsername || !rawRepo) return false;
 
@@ -197,7 +281,7 @@ export async function pushFileToGitHub(filePath, content, commitMessage = null) 
         const base64Content = btoa(binaryString);
         let sha = null;
 
-        const fileCheck = await secureFetch(apiPath, {
+        const fileCheck = await githubFetch(apiPath, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -223,7 +307,7 @@ export async function pushFileToGitHub(filePath, content, commitMessage = null) 
             payload.sha = sha;
         }
 
-        const pushRes = await secureFetch(apiPath, {
+        const pushRes = await githubFetch(apiPath, {
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -244,7 +328,7 @@ export async function pullFileFromGitHub(filePath) {
     const session = await requireGithubSession();
     const rawToken = session?.token;
     const rawUsername = session?.githubUsername;
-    const rawRepo = localStorage.getItem('repository');
+    const rawRepo = getActiveRepositorySync();
 
     if (!rawToken || !rawUsername || !rawRepo) return null;
     if (!AUTH_TOKEN_REGEX.test(rawToken) || !REPO_NAME_REGEX.test(rawRepo)) return null;
@@ -257,7 +341,7 @@ export async function pullFileFromGitHub(filePath) {
     const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFilePath}`;
 
     try {
-        const res = await secureFetch(apiPath, {
+        const res = await githubFetch(apiPath, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -288,7 +372,7 @@ export async function deletePathFromGitHub(filePath) {
     const session = await requireGithubSession();
     const rawToken = session?.token;
     const rawUsername = session?.githubUsername;
-    const rawRepo = localStorage.getItem('repository');
+    const rawRepo = getActiveRepositorySync();
 
     if (!rawToken || !rawUsername || !rawRepo) return false;
     if (!AUTH_TOKEN_REGEX.test(rawToken) || !REPO_NAME_REGEX.test(rawRepo)) return false;
@@ -300,7 +384,7 @@ export async function deletePathFromGitHub(filePath) {
     const apiPath = `https://api.github.com/repos/${username}/${repo}/contents/${safeFilePath}`;
 
     try {
-        const res = await secureFetch(apiPath, {
+        const res = await githubFetch(apiPath, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${rawToken}`,
@@ -325,7 +409,7 @@ export async function deletePathFromGitHub(filePath) {
             return overallSuccess;
         }
         else if (data && typeof data.sha === 'string') {
-            const deleteRes = await secureFetch(apiPath, {
+            const deleteRes = await githubFetch(apiPath, {
                 method: 'DELETE',
                 headers: {
                     'Authorization': `Bearer ${rawToken}`,
@@ -383,7 +467,7 @@ async function fetchRepoIssues(repoName, state = 'all') {
     if (!token || !username) return null;
 
     try {
-        const res = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(repoName)}/issues?state=${state}&per_page=100`, {
+        const res = await githubFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(repoName)}/issues?state=${state}&per_page=100`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -430,7 +514,7 @@ async function verifyRemotePath(repoName, directoryPath = '') {
     }
 
     try {
-        const res = await secureFetch(url, {
+        const res = await githubFetch(url, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -446,13 +530,13 @@ async function verifyRemotePath(repoName, directoryPath = '') {
 
 function getGithubConfigPrompt() {
     const username = getUnlockedUsernameSync() || 'guest';
-    const repo = localStorage.getItem('repository') || '';
+    const repo = getActiveRepositorySync() || '';
     const deepPath = currentPath && currentPath.length > 0 ? '/' + currentPath.join('/') : '';
     return `${username}/github${repo ? '/' + repo : ''}${deepPath}>`;
 }
 
 export function isInGithubContext() {
-    return localStorage.getItem('github_active') === 'true' || !!localStorage.getItem('repository');
+    return getWorkspaceStateSync().githubActive;
 }
 
 export function printGithubHelp() {
@@ -485,6 +569,7 @@ export function printGithubHelp() {
     print("  issues/reopen/[number]         - reopen a closed issue");
     print(`  issues/comment/[number]/"msg"  - post a comment on an issue`);
     print(`  issues/fixed/[number]/"msg"    - post a comment and close the issue`);
+    print("  permissions                    - audit safe GitHub capabilities and required fine-grained permission profile");
     print("  lock                           - lock the encrypted github session and release the token from memory");
     print("  exit                           - leave the github workspace and return to the default prompt");
 }
@@ -517,9 +602,9 @@ export async function handlePendingInteraction(rawInput) {
         if (lowerInput === 'yes' || lowerInput === 'y') {
             if (pendingDeleteType === 'repository') {
                 print(`system: executing structural teardown streams for remote repository: '${pendingDeleteTarget}'...`);
-                const activeRepoName = localStorage.getItem('repository');
+                const activeRepoName = getActiveRepositorySync();
                 if (activeRepoName && activeRepoName.toLowerCase() === pendingDeleteTarget.toLowerCase()) {
-                    localStorage.removeItem('repository');
+                    await clearWorkspaceState();
                     currentPath.length = 0;
                     virtualDirectories.clear();
                     savePathState();
@@ -589,7 +674,7 @@ export async function handlePendingInteraction(rawInput) {
                 print("error: active github auth credentials not resolved. process aborted.");
             } else {
                 try {
-                    const patchRes = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(pendingRenameTarget)}`, {
+                    const patchRes = await githubFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(pendingRenameTarget)}`, {
                         method: 'PATCH',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -600,7 +685,7 @@ export async function handlePendingInteraction(rawInput) {
 
                     if (patchRes.ok) {
                         print(`system: repository successfully rewritten to '${newName}' in cloud configurations.`);
-                        localStorage.setItem('repository', newName);
+                        await setWorkspaceState(newName);
                         savePathState();
                     } else {
                         const errData = await patchRes.json().catch(() => ({}));
@@ -655,7 +740,7 @@ export async function handlePendingInteraction(rawInput) {
         else if (pendingRenameType === 'directory') {
             const oldFullDir = getFullFilePath(pendingRenameTarget);
             const newFullDir = getFullFilePath(newName);
-            const repoName = localStorage.getItem('repository');
+            const repoName = getActiveRepositorySync();
 
             print(`system: configuring structural directory node updates from [${oldFullDir}] to [${newFullDir}]...`);
             print(`system: migrating each remote blob under the new directory path and purging old nodes...`);
@@ -692,12 +777,12 @@ export async function handlePendingInteraction(rawInput) {
             const session = await requireGithubSession();
             const token = session?.token;
             const username = session?.githubUsername;
-            const activeRepoName = localStorage.getItem('repository');
+            const activeRepoName = getActiveRepositorySync();
             const newVisibility = pendingVisibilityChange;
 
             print(`system: updating repository visibility to '${newVisibility}'...`);
             try {
-                const res = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}`, {
+                const res = await githubFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -769,7 +854,7 @@ export async function handlePendingInteraction(rawInput) {
         const oldName = pendingSettingsRenameOldName;
 
         try {
-            const res = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(oldName)}`, {
+            const res = await githubFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(oldName)}`, {
                 method: 'PATCH',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -780,8 +865,8 @@ export async function handlePendingInteraction(rawInput) {
             });
 
             if (res.ok) {
-                localStorage.setItem('repository', newRepoName);
-                activeRepo = newRepoName;
+                await setWorkspaceState(newRepoName);
+                
                 savePathState();
                 print(`system: done. the repository name is now changed to '${sanitizeInputString(newRepoName)}'.`);
             } else {
@@ -799,7 +884,7 @@ export async function handlePendingInteraction(rawInput) {
     }
 }
 
-const WORKSPACE_FIRST_SEGMENTS = new Set(['create', 'delete', 'rename', 'pull', 'save', 'run', 'fletch', 'issues', 'settings', 'lock']);
+const WORKSPACE_FIRST_SEGMENTS = new Set(['create', 'delete', 'rename', 'pull', 'save', 'run', 'fletch', 'issues', 'settings', 'permissions', 'lock']);
 
 export function isWorkspaceCommand(cleanCommand) {
     const lowerCommand = cleanCommand.toLowerCase();
@@ -823,11 +908,11 @@ export async function handleWorkspaceCommand(cleanCommand) {
     const currentUsername = (getUnlockedUsernameSync() || 'guest').toLowerCase();
     const firstSegment = lowerCommand.split('/')[0];
     const isRootReset = (lowerCommand === 'darshseraphic/' || lowerCommand === 'rocen/' || lowerCommand === `${currentUsername}/`);
-    const activeRepoName = localStorage.getItem('repository');
+    const activeRepoName = getActiveRepositorySync();
 
     if (lowerCommand === 'lock') {
         lockSession();
-        localStorage.removeItem('github_active');
+        lastValidatedSessionId = '';
         currentPath.length = 0;
         virtualDirectories.clear();
         savePathState();
@@ -857,7 +942,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
     }
 
     if (isRootReset) {
-        localStorage.removeItem('repository');
+        await clearWorkspaceState();
         currentPath.length = 0;
         savePathState();
         setMode("main", getSystemPrompt());
@@ -870,9 +955,8 @@ export async function handleWorkspaceCommand(cleanCommand) {
             setMode("main", getSystemPrompt());
             return;
         }
-        localStorage.removeItem('repository');
-        localStorage.removeItem('github_active');
-        currentPath.length = 0;
+        await clearWorkspaceState();
+            currentPath.length = 0;
         virtualDirectories.clear();
         savePathState();
         print("system: exited github workspace context. returning to default prompt.");
@@ -882,15 +966,15 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
     if (lowerCommand === '..' || lowerCommand.startsWith('../') || lowerCommand.endsWith('/..')) {
         const steps = cleanCommand.split('/');
-        steps.forEach(step => {
+        for (const step of steps) {
             if (step === '..') {
                 if (currentPath.length > 0) {
                     currentPath.pop();
                 } else {
-                    localStorage.removeItem('repository');
+                    await clearWorkspaceState();
                 }
             }
-        });
+        }
         savePathState();
         setMode("main", getSystemPrompt());
         return;
@@ -908,15 +992,15 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
         if (pathTarget.startsWith('..')) {
             const steps = pathTarget.split('/');
-            steps.forEach(step => {
+            for (const step of steps) {
                 if (step === '..') {
                     if (currentPath.length > 0) {
                         currentPath.pop();
                     } else {
-                        localStorage.removeItem('repository');
+                        await clearWorkspaceState();
                     }
                 }
-            });
+            }
             savePathState();
             setMode("main", getSystemPrompt());
             return;
@@ -947,7 +1031,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             print(`system: scanning GitHub for repository configuration: '${pathTarget}'...`);
             const repoExists = await verifyRemotePath(pathTarget, '');
             if (repoExists) {
-                localStorage.setItem('repository', pathTarget);
+                await setWorkspaceState(pathTarget);
                 savePathState();
                 setMode("main", getSystemPrompt());
             } else {
@@ -971,8 +1055,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
     const targetPayload = cleanCommand.split('/').slice(1).join('/');
 
     if (firstSegment === 'github') {
-        localStorage.setItem('github_active', 'true');
-        usedToolsInSession.add('github');
+                usedToolsInSession.add('github');
         setMode('github', getGithubConfigPrompt());
         if (typeof githubTool.onEnter === 'function') {
             await githubTool.onEnter();
@@ -1098,7 +1181,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const newState = subAction === 'close' ? 'closed' : 'open';
             print(`system: updating issue ${issueNumber} state to '${newState}'...`);
             try {
-                const res = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
+                const res = await githubFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1133,7 +1216,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
             print(`system: posting comment to issue ${issueNumber}...`);
             try {
-                const commentRes = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}/comments`, {
+                const commentRes = await githubFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}/comments`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1150,7 +1233,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 print(`system: comment posted successfully to issue ${issueNumber}.`);
 
                 if (subAction === 'fixed') {
-                    const closeRes = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
+                    const closeRes = await githubFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(activeRepoName)}/issues/${issueNumber}`, {
                         method: 'PATCH',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1225,7 +1308,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
         if (!activeRepoName) {
             print(`system: compiling remote initialization sequence for new GitHub repository: '${targetPayload}'...`);
             try {
-                const createRes = await secureFetch('https://api.github.com/user/repos', {
+                const createRes = await githubFetch('https://api.github.com/user/repos', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1242,7 +1325,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
                 if (createRes.ok) {
                     print(`system: successfully initialized actual remote repository '${targetPayload}' on GitHub!`);
-                    localStorage.setItem('repository', targetPayload);
+                    await setWorkspaceState(targetPayload);
                     savePathState();
                     setMode("main", getSystemPrompt());
                 } else {
@@ -1358,7 +1441,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const token = session?.token;
             const username = session?.githubUsername;
             try {
-                const res = await secureFetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
+                const res = await githubFetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1429,7 +1512,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const token = session?.token;
             const username = session?.githubUsername;
             try {
-                const res = await secureFetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
+                const res = await githubFetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1477,56 +1560,16 @@ export async function handleWorkspaceCommand(cleanCommand) {
             return;
         }
 
-        print("system: packing web asset layout components and launching sandbox visualizer...");
-        const escapedContent = btoa(unescape(encodeURIComponent(codeStructure)));
+        print("system: packing repository content into isolated preview sandbox...");
         const isHtml = targetPayload.toLowerCase().endsWith('.html');
-
-        let sandboxWrapper = "";
-        if (isHtml) {
-            sandboxWrapper = `
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Application Sandbox Preview</title>
-                    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'none';">
-                    <style>
-                        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
-                        iframe { border: none; width: 100%; height: 100%; display: block; }
-                    </style>
-                </head>
-                <body>
-                    <iframe sandbox="allow-scripts" src="data:text/html;base64,${escapedContent}"></iframe>
-                </body>
-                </html>
-            `;
-        } else {
-            sandboxWrapper = `
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Universal Preview - ${targetPayload}</title>
-                    <style>
-                        html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #121212; color: #e0e0e0; font-family: 'Courier New', Courier, monospace; }
-                        .header { background: #1a1a1a; padding: 10px 20px; border-bottom: 1px solid #333; font-size: 12px; color: #888; }
-                        pre { margin: 0; padding: 20px; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.6; }
-                    </style>
-                </head>
-                <body>
-                    <div class="header">Target Workspace Node: ${targetPayload} | Plaintext Runtime View</div>
-                    <pre id="output-content"></pre>
-                    <script>
-                        document.getElementById('output-content').textContent = decodeURIComponent(escape(atob('${escapedContent}')));
-                    </script>
-                </body>
-                </html>
-            `;
+        const sandboxWrapper = isHtml
+            ? buildHtmlPreviewDocument(codeStructure)
+            : buildTextPreviewDocument(targetPayload, codeStructure);
+        try {
+            openSandboxPreview(sandboxWrapper);
+        } catch (errorValue) {
+            print(`error: ${errorValue instanceof Error ? errorValue.message : 'preview could not be opened securely.'}`);
         }
-
-        const blob = new Blob([sandboxWrapper], { type: 'text/html' });
-        const blobURL = URL.createObjectURL(blob);
-        window.open(blobURL, '_blank', 'noopener,noreferrer');
         return;
     }
 
@@ -1538,7 +1581,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const token = session?.token;
             const username = session?.githubUsername;
             try {
-                const res = await secureFetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
+                const res = await githubFetch(`https://api.github.com/repos/${username}/${activeRepoName}`, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1590,7 +1633,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
             print(`system: updating default branch to '${sanitizeInputString(branchName)}'...`);
             try {
-                const res = await secureFetch(repoApiBase, {
+                const res = await githubFetch(repoApiBase, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1622,7 +1665,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             if (issueMode === 'all') {
                 print("system: removing interaction restrictions, issues open to all users...");
                 try {
-                    const res = await secureFetch(`${repoApiBase}/interaction-limits`, {
+                    const res = await githubFetch(`${repoApiBase}/interaction-limits`, {
                         method: 'DELETE',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1640,7 +1683,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             } else {
                 print("system: restricting issue interactions to collaborators only...");
                 try {
-                    const res = await secureFetch(`${repoApiBase}/interaction-limits`, {
+                    const res = await githubFetch(`${repoApiBase}/interaction-limits`, {
                         method: 'PUT',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1665,7 +1708,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const fundingPath = '.github/FUNDING.yml';
             print("system: checking current sponsorship funding configuration...");
             try {
-                const checkRes = await secureFetch(`${repoApiBase}/contents/${fundingPath}`, {
+                const checkRes = await githubFetch(`${repoApiBase}/contents/${fundingPath}`, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1673,7 +1716,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 if (checkRes.ok) {
                     const fileData = await checkRes.json();
                     print("system: removing sponsorship funding file, disabling sponsor button...");
-                    const deleteRes = await secureFetch(`${repoApiBase}/contents/${fundingPath}`, {
+                    const deleteRes = await githubFetch(`${repoApiBase}/contents/${fundingPath}`, {
                         method: 'DELETE',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1696,7 +1739,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                         binaryString += String.fromCharCode(uint8Array[i]);
                     }
                     const base64Content = btoa(binaryString);
-                    const createRes = await secureFetch(`${repoApiBase}/contents/${fundingPath}`, {
+                    const createRes = await githubFetch(`${repoApiBase}/contents/${fundingPath}`, {
                         method: 'PUT',
                         headers: {
                             'Authorization': `Bearer ${token}`,
@@ -1723,7 +1766,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
             const fieldName = settingsAction === 'discussions' ? 'has_discussions' : 'has_projects';
             print(`system: checking current ${settingsAction} configuration...`);
             try {
-                const checkRes = await secureFetch(repoApiBase, {
+                const checkRes = await githubFetch(repoApiBase, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1736,7 +1779,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
                 const newState = !currentState;
 
                 print(`system: ${newState ? 'enabling' : 'disabling'} ${settingsAction}...`);
-                const patchRes = await secureFetch(repoApiBase, {
+                const patchRes = await githubFetch(repoApiBase, {
                     method: 'PATCH',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1765,7 +1808,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 
             print("system: checking current visibility state...");
             try {
-                const checkRes = await secureFetch(repoApiBase, {
+                const checkRes = await githubFetch(repoApiBase, {
                     headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' },
                     cache: 'no-store'
                 });
@@ -1806,7 +1849,7 @@ export async function handleWorkspaceCommand(cleanCommand) {
 }
 
 const githubTool = {
-    helpText: "configure terminal verification credentials. subcommands: login/token, repo/name, confirm, lock, logout, exit",
+    helpText: "configure terminal verification credentials. subcommands: login/token, repo/name, confirm, lock, logout, vscode, exit",
     get prompt() {
         return getGithubConfigPrompt();
     },
@@ -1816,16 +1859,8 @@ const githubTool = {
     delete: deletePathFromGitHub,
 
     onEnter: async () => {
-        localStorage.setItem('github_active', 'true');
-
-        let session = getMemoryGithubSession();
-        if (!session && localStorage.getItem('user') && localStorage.getItem('github_username')) {
-            session = await migrateLegacyGithubSession();
-        } else if (!session && hasStoredSession()) {
-            session = await unlockStoredSession();
-        }
-
-        const repo = localStorage.getItem('repository');
+        const session = await requireGithubSession();
+        const repo = getActiveRepositorySync();
 
         if (session?.token && session.githubUsername) {
             print(`status: verified encrypted authorization session as @${sanitizeInputString(session.githubUsername)}`);
@@ -1846,7 +1881,7 @@ const githubTool = {
 
         const currentPrompt = getGithubConfigPrompt();
         const lowerInput = cleanInput.toLowerCase();
-        const activeRepoName = localStorage.getItem('repository');
+        const activeRepoName = getActiveRepositorySync();
 
         
         if (currentPath.length > 0) {
@@ -1940,6 +1975,29 @@ const githubTool = {
             return;
         }
 
+        if (action === 'vscode') {
+            try {
+                const opened = window.open('https://vscode.dev/', '_blank', 'noopener,noreferrer');
+                if (!opened) {
+                    print('error: browser blocked the VS Code window. allow pop-ups for Studio and try again.');
+                } else {
+                    print('system: opened vscode.dev in a new tab.');
+                }
+            } catch {
+                print('error: unable to open vscode.dev securely.');
+            }
+            return;
+        }
+
+        if (action === 'permissions') {
+            try {
+                await auditGithubPermissions();
+            } catch (errorValue) {
+                print(`error: permission audit could not complete: ${errorValue instanceof Error ? errorValue.message : 'unknown failure'}`);
+            }
+            return;
+        }
+
         if (action === 'login') {
             if (!value) {
                 print("error: authentication token value cannot be completely empty.");
@@ -1953,7 +2011,7 @@ const githubTool = {
             print("system: validating operational access token with GitHub cloud gateway...");
 
             try {
-                const res = await secureFetch('https://api.github.com/user', {
+                const res = await githubFetch('https://api.github.com/user', {
                     headers: {
                         'Authorization': `Bearer ${value}`,
                         'Accept': 'application/vnd.github+json'
@@ -1963,7 +2021,7 @@ const githubTool = {
 
                 if (res.ok) {
                     const userData = await res.json();
-                    if (userData && userData.login) {
+                    if (userData && userData.login && Number.isInteger(userData.id)) {
                         const sessionPassword = await requestNewSessionPassword();
                         if (sessionPassword === null) {
                             print("system: secure session creation canceled. token was not persisted.");
@@ -1975,15 +2033,18 @@ const githubTool = {
                             githubUserId: typeof userData.id === 'number' ? String(userData.id) : '',
                             githubUsername: userData.login,
                             sessionId: crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join(''),
-                            repository: localStorage.getItem('repository') || '',
+                            repository: '',
                             githubActive: true,
                             createdAt: new Date().toISOString()
                         };
 
                         try {
                             await saveSession(session, sessionPassword);
-                            clearLegacyAuthStorage();
-                            localStorage.setItem('github_active', 'true');
+                            clearLegacyGithubStorage();
+                            lastValidatedSessionId = session.sessionId || '';
+                            currentPath.length = 0;
+                            virtualDirectories.clear();
+                            savePathState();
                             setMode('github', getGithubConfigPrompt());
 
                             print(`system: successfully authenticated and stored as an encrypted session for @${sanitizeInputString(userData.login)}.`);
@@ -2024,7 +2085,7 @@ const githubTool = {
             print(`system: checking if repository '${sanitizeInputString(value)}' exists under @${sanitizeInputString(username)}...`);
 
             try {
-                const checkRes = await secureFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(value)}`, {
+                const checkRes = await githubFetch(`https://api.github.com/repos/${encodeURIComponent(username)}/${encodeURIComponent(value)}`, {
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Accept': 'application/vnd.github+json'
@@ -2033,8 +2094,8 @@ const githubTool = {
                 });
 
                 if (checkRes.ok) {
-                    localStorage.setItem('repository', value);
-                    activeRepo = value;
+                    await setWorkspaceState(value);
+                    
                     print(`system: successfully set target repository to: ${sanitizeInputString(value)}`);
                     print("status: setup successfully cached! type 'exit' to deploy configurations to terminal prompt.");
                 } else if (checkRes.status === 404) {
@@ -2068,7 +2129,7 @@ const githubTool = {
             print(`system: creating private repository '${sanitizeInputString(repoToCreate)}' automatically on GitHub...`);
 
             try {
-                const createRes = await secureFetch('https://api.github.com/user/repos', {
+                const createRes = await githubFetch('https://api.github.com/user/repos', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -2085,8 +2146,8 @@ const githubTool = {
 
                 if (createRes.ok) {
                     print(`system: successfully initialized private repository '${sanitizeInputString(repoToCreate)}'!`);
-                    localStorage.setItem('repository', repoToCreate);
-                    activeRepo = repoToCreate;
+                    await setWorkspaceState(repoToCreate);
+                    
                     print("status: workspace initialized! type 'exit' to use your environment core.");
                 } else {
                     print("error: failed to automatically provision a new github repository storage engine.");
@@ -2099,21 +2160,15 @@ const githubTool = {
 
         if (action === 'lock') {
             lockSession();
-            localStorage.removeItem('github_active');
+            clearGithubAuthorizationMemory();
             print("system: encrypted github session locked. plaintext authorization material released from memory.");
-            setMode('github', getGithubConfigPrompt());
+            setMode('main', getSystemPrompt());
             return;
         }
 
         if (action === 'logout') {
             clearSession();
-            localStorage.removeItem('repository');
-            localStorage.removeItem('github_active');
-            currentPath.length = 0;
-            virtualDirectories.clear();
-            savePathState();
-            activeRepo = '';
-            pendingRepoCreation = null;
+            clearGithubAuthorizationMemory();
 
             setMode('github', getGithubConfigPrompt());
 
@@ -2126,7 +2181,7 @@ const githubTool = {
             return;
         }
 
-        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, lock, logout, exit");
+        print("error: unhandled sub-command. available options: login/token, repo/name, confirm, lock, logout, vscode, exit");
     },
     onExit: () => {
         print("system: exited github config mode.");
