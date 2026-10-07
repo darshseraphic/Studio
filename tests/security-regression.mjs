@@ -147,6 +147,10 @@ assert.match(previewSecurity, /worker-src 'none'/);
 assert.match(previewSecurity, /script-src 'unsafe-inline'/);
 assert.match(editor, /buildHtmlPreviewDocument/);
 assert.match(github, /buildHtmlPreviewDocument/);
+assert.match(editor, /from ['\"]\.\/preview-security\.js['\"]/);
+assert.match(github, /from ['\"]\.\/preview-security\.js['\"]/);
+const previewCallers = sourceFiles.filter((name) => name !== 'preview-security.js' && /openSandboxPreview\s*\(/.test(read(name)));
+assert.deepEqual(previewCallers, ['editor.js', 'github.js'], 'Editor/GitHub preview creation paths must share preview-security.js');
 
 // --- GitHub permission audit source checks. ---
 assert.match(githubPermissions, /Contents: write/);

@@ -36,10 +36,20 @@ function encodeBase64Utf8(value) {
 function injectPreviewCsp(html) {
     const meta = `<meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}">`;
     const normalized = String(html ?? '');
-    if (/<head\b[^>]*>/i.test(normalized)) {
-        return normalized.replace(/<head\b[^>]*>/i, (match) => `${match}${meta}`);
+
+    // The repository controls the entire document string, including where its
+    // <head> appears. Put the CSP before any repository-controlled token so a
+    // script placed before <head> cannot execute before the policy is active.
+    // Preserve a leading doctype when present so ordinary previews stay in
+    // standards mode.
+    const doctypeMatch = normalized.match(/^(\s*)(<!doctype\b[^>]*>)/i);
+    if (doctypeMatch) {
+        const leading = doctypeMatch[1];
+        const doctype = doctypeMatch[2];
+        const remainder = normalized.slice(doctypeMatch[0].length);
+        return `${leading}${doctype}${meta}${remainder}`;
     }
-    return `<!doctype html><html lang="en"><head><meta charset="UTF-8">${meta}</head><body>${normalized}</body></html>`;
+    return `${meta}${normalized}`;
 }
 
 function escapePreviewText(value) {

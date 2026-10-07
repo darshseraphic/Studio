@@ -2,6 +2,13 @@ import { registerTool, print, setMode, getSystemPrompt } from './main.js';
 import { secureFetch, openExternalUrl } from './network-security.js';
 
 let openedWindow = null;
+let openedWindowOrigin = null;
+
+const MAP_CLOSE_MESSAGE = Object.freeze({
+    type: 'studio.map',
+    version: 1,
+    action: 'close'
+});
 
 const closeOpenedMapWindow = () => {
     if (openedWindow && !openedWindow.closed) {
@@ -9,18 +16,35 @@ const closeOpenedMapWindow = () => {
     }
 
     openedWindow = null;
+    openedWindowOrigin = null;
 };
 
-window.addEventListener('message', (e) => {
-    if (e.data === 'close-map-environment') {
-        closeOpenedMapWindow();
-        print("system: closing active tool environment session [map].");
-        setMode("main", getSystemPrompt());
-        const cmdInput = document.getElementById('cmd-input');
-        if (cmdInput) {
-            cmdInput.value = '';
-            cmdInput.style.height = '26px';
-        }
+const rememberOpenedMapWindow = (windowRef, expectedOrigin = null) => {
+    openedWindow = windowRef;
+    openedWindowOrigin = expectedOrigin;
+};
+
+const isValidMapCloseMessage = (data) => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+    const keys = Object.keys(data).sort();
+    if (keys.length !== 3 || keys[0] !== 'action' || keys[1] !== 'type' || keys[2] !== 'version') return false;
+    return data.type === MAP_CLOSE_MESSAGE.type
+        && data.version === MAP_CLOSE_MESSAGE.version
+        && data.action === MAP_CLOSE_MESSAGE.action;
+};
+
+window.addEventListener('message', (event) => {
+    if (!openedWindow || event.source !== openedWindow) return;
+    if (!openedWindowOrigin || event.origin !== openedWindowOrigin) return;
+    if (!isValidMapCloseMessage(event.data)) return;
+
+    closeOpenedMapWindow();
+    print("system: closing active tool environment session [map].");
+    setMode("main", getSystemPrompt());
+    const cmdInput = document.getElementById('cmd-input');
+    if (cmdInput) {
+        cmdInput.value = '';
+        cmdInput.style.height = '26px';
     }
 });
 
@@ -81,7 +105,7 @@ const mapTool = {
 
             const targetUrl = `https://anvaka.github.io/city-roads/?q=${encodeURIComponent(locationName)}`;
             try {
-                openedWindow = openExternalUrl(targetUrl);
+                rememberOpenedMapWindow(openExternalUrl(targetUrl), new URL(targetUrl).origin);
             } catch (errorValue) {
                 print(`error: ${errorValue instanceof Error ? errorValue.message : 'external map navigation was rejected.'}`);
                 return;
@@ -98,13 +122,15 @@ const mapTool = {
 
             // Open the new tab immediately from the user command so browser popup blockers
             // are less likely to reject it while geocoding runs asynchronously.
-            openedWindow = window.open('about:blank', '_blank');
-            if (openedWindow) {
+            const initialMapWindow = window.open('about:blank', '_blank');
+            if (initialMapWindow) {
+                rememberOpenedMapWindow(initialMapWindow);
                 try {
                     openedWindow.opener = null;
                 } catch {
                     try { openedWindow.close(); } catch { /* best-effort cleanup */ }
                     openedWindow = null;
+                    openedWindowOrigin = null;
                 }
             }
             if (!openedWindow) {
@@ -117,8 +143,7 @@ const mapTool = {
 
             const geoData = await geoResponse.json();
             if (!geoData || !Array.isArray(geoData.results) || geoData.results.length === 0) {
-                if (openedWindow && !openedWindow.closed) openedWindow.close();
-                openedWindow = null;
+                closeOpenedMapWindow();
                 print(`error: could not resolve coordinates for "${locationName}".`);
                 return;
             }
@@ -129,8 +154,7 @@ const mapTool = {
             const displayName = locationRecord.name + (locationRecord.country ? `, ${locationRecord.country}` : '');
 
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-                if (openedWindow && !openedWindow.closed) openedWindow.close();
-                openedWindow = null;
+                closeOpenedMapWindow();
                 print(`error: received invalid coordinates for "${locationName}".`);
                 return;
             }
@@ -145,8 +169,10 @@ const mapTool = {
             const mapQuery = encodeURIComponent(displayName);
             const mapUrl =
                 `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
+            const mapOrigin = new URL(mapUrl).origin;
 
             if (openedWindow && !openedWindow.closed) {
+                openedWindowOrigin = mapOrigin;
                 openedWindow.location.replace(mapUrl);
                 try {
                     openedWindow.focus();
@@ -155,7 +181,7 @@ const mapTool = {
                 }
             } else {
                 // The first tab may have been closed while geocoding was in progress.
-                openedWindow = openExternalUrl(mapUrl);
+                rememberOpenedMapWindow(openExternalUrl(mapUrl), mapOrigin);
             }
 
             if (!openedWindow) {

