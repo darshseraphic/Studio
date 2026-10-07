@@ -2,6 +2,49 @@
 
 A comprehensive, production-grade technical manual and operational guide for the modular web terminal toolset. This document provides step-by-step breakdowns, architecture blueprints, syntax rules, execution pipelines, and error handling for all registered tools.
 
+
+## What Studio Does
+
+Studio is a browser-based interactive terminal environment that brings several tools into one command-driven workspace. It provides readers for Bhagavad Gita verses and Bible passages, a scientific-calculator environment, a Cat API portal, and a GitHub workspace for browsing, editing, previewing, and managing repository content. The GitHub workspace can create repositories and files, pull and save files, rename or delete resources with confirmation guardrails, manage issues and repository settings, and open isolated previews of repository content. The command reference and detailed tool documentation below remain the authoritative descriptions of those capabilities.
+
+## How Studio Protects User Data
+
+Studio is designed so that sensitive GitHub session data and untrusted repository content are handled differently from ordinary application data.
+
+### GitHub Credentials and Session State
+
+GitHub credentials are stored in the encrypted Studio session envelope rather than as standalone plaintext browser keys. The operational GitHub session is kept in memory only while unlocked. Unlocking a stored session does not make it operational until GitHub `/user` validation succeeds and both the stored immutable GitHub user ID and login match the verified profile. A validation failure or GitHub HTTP 401 locks the session and clears the in-memory authorization and GitHub workspace/navigation state.
+
+The `lock` operation clears the in-memory session and cryptographic key while preserving the encrypted session for a later unlock. `logout` destroys the encrypted stored session and performs the associated legacy cleanup.
+
+GitHub repository/workspace binding state is stored inside the encrypted session envelope rather than as standalone plaintext `repository` or `github_active` browser state. Local file buffers and virtual directory state are kept in volatile browser memory rather than persisted as separate GitHub credential storage.
+
+### API and Network Protection
+
+Application API traffic is routed through the centralized `network-security.js` gateway. Requests are restricted to documented allowlisted origins, require HTTPS for external services, omit browser credentials, send no referrer, reject redirects, and enforce a hard maximum request timeout of 20 seconds. GitHub authorization headers are not allowed to cross to non-GitHub API origins.
+
+External URLs opened through Studio are independently validated so dangerous URL schemes, embedded credentials, and non-local HTTP destinations are rejected. The popup is created with its opener relationship severed before external navigation.
+
+### Repository Preview Protection
+
+Repository-controlled HTML and JavaScript are treated as untrusted content. Editor and GitHub previews use the shared `preview-security.js` boundary and run inside `sandbox="allow-scripts"` iframes without `allow-same-origin`, form, popup, download, or top-navigation permissions.
+
+The preview child receives its own restrictive CSP before repository-controlled content can execute. It blocks arbitrary connection APIs, remote executable resources, frames, workers, objects, and forms while preserving legitimate inline HTML/CSS/JavaScript and local `data:`/`blob:` resources. The preview has an opaque origin and no Studio opener, preventing repository code from directly accessing Studio DOM, cookies, storage, or session state.
+
+Repository text and metadata rendered in the trusted Studio document use text-oriented output rather than trusted HTML insertion. Raw repository HTML remains inside the isolated preview boundary.
+
+### Argon2id Session-Key Protection
+
+GitHub session-key derivation runs in a dedicated same-origin Web Worker using the exact locally vendored `hash-wasm@4.12.0` Argon2id provider. The production parameters are enforced inside the Worker and the verified local provider artifact is recorded by SHA-256. There is no CDN fallback; if the local provider cannot be loaded or verified, derivation fails closed.
+
+Temporary password, salt, provider-result, and handoff buffers receive best-effort cleanup. Browser JavaScript cannot guarantee zeroization of immutable strings or all runtime copies, so this is memory hygiene rather than hardware-enforced memory isolation.
+
+### What Is and Is Not Encrypted
+
+The security model above is primarily concerned with GitHub credentials, session keys, encrypted workspace state, and the boundary around untrusted repository code. It does **not** mean every piece of browser state is encrypted.
+
+For example, the calculator intentionally stores its variables and terminal history in browser `localStorage`, as documented in the calculator section below. Users should therefore avoid entering secrets into calculator state or other non-sensitive tool data that the documentation identifies as browser-persisted.
+
 ## Security Architecture
 
 Studio routes application API traffic through the centralized `network-security.js` gateway. API requests are restricted to the documented Studio service origins, require HTTPS, omit browser credentials, send no referrer, reject redirects, and use a hard-bounded timeout: callers may request a smaller timeout, but the effective timeout can never exceed 20 seconds. The generic external-navigation validator accepts `http://localhost`, `127.0.0.1`, or `[::1]` for local development; the API gateway still requires an explicitly allowlisted origin, so localhost HTTP is not an allowed API origin by default.
@@ -476,7 +519,7 @@ To prevent accidental data loss, structural modifications (deletion, renaming, v
   1. Retrieves file text buffer from `fileBuffers[target]`.
   2. Base64 encodes content payload using `btoa(unescape(encodeURIComponent(code)))`.
   3. Constructs sandbox HTML wrapper document:
-     * **HTML Files (`.html`)**: Wraps content inside a sandboxed `<iframe>` enforcing Content Security Policy (`script-src 'none'`).
+     * **HTML Files (`.html`)**: Wraps content inside the shared sandboxed `<iframe>` security boundary enforced by `preview-security.js`; repository HTML may execute inline scripts inside the sandbox while the preview CSP blocks remote executable resources, arbitrary connections, frames, workers, objects, and forms.
      * **Other Text Files**: Wraps content in styled terminal preview code block.
   4. Generates dynamic Blob URL via `URL.createObjectURL(blob)` and opens it in a new browser tab (`window.open`).
 
