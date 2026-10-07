@@ -24,6 +24,99 @@ const rememberOpenedMapWindow = (windowRef, expectedOrigin = null) => {
     openedWindowOrigin = expectedOrigin;
 };
 
+const openMapWorkspaceWindow = () => {
+    closeOpenedMapWindow();
+
+    const initialMapWindow = window.open('about:blank', '_blank');
+    if (!initialMapWindow) {
+        throw new Error('the browser blocked the new tab. allow pop-ups for Studio and try again.');
+    }
+
+    rememberOpenedMapWindow(initialMapWindow);
+    try {
+        openedWindow.opener = null;
+    } catch {
+        try { openedWindow.close(); } catch { /* best-effort cleanup */ }
+        openedWindow = null;
+        openedWindowOrigin = null;
+        throw new Error('the map workspace could not be secured.');
+    }
+
+    return openedWindow;
+};
+
+const navigateMapWorkspace = (mapUrl) => {
+    const mapOrigin = new URL(mapUrl).origin;
+    if (openedWindow && !openedWindow.closed) {
+        openedWindowOrigin = mapOrigin;
+        openedWindow.location.replace(mapUrl);
+        try {
+            openedWindow.focus();
+        } catch {
+            // Focusing a cross-origin tab can be denied by the browser.
+        }
+        return;
+    }
+
+    rememberOpenedMapWindow(openExternalUrl(mapUrl), mapOrigin);
+};
+
+const requestCurrentLocation = () => new Promise((resolve, reject) => {
+    if (!navigator.geolocation || typeof navigator.geolocation.getCurrentPosition !== 'function') {
+        reject(Object.assign(new Error('browser geolocation is not supported.'), { code: 0 }));
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 0
+    });
+});
+
+const getCurrentLocationErrorMessage = (errorValue) => {
+    switch (errorValue?.code) {
+        case 1:
+            return 'error: location permission was denied.';
+        case 2:
+            return 'error: current location is unavailable.';
+        case 3:
+            return 'error: location request timed out.';
+        default:
+            return 'error: browser geolocation is not supported.';
+    }
+};
+
+const handleCurrentLocation = async () => {
+    print('system: requesting current browser location...');
+
+    try {
+        openMapWorkspaceWindow();
+    } catch (errorValue) {
+        print(`error: ${errorValue instanceof Error ? errorValue.message : 'could not open the map workspace.'}`);
+        return;
+    }
+
+    try {
+        const position = await requestCurrentLocation();
+        const lat = Number(position?.coords?.latitude);
+        const lon = Number(position?.coords?.longitude);
+
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)
+            || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+            throw new Error('invalid coordinates returned by the browser.');
+        }
+
+        const mapQuery = encodeURIComponent(`${lat},${lon}`);
+        const mapUrl = `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
+        print('system: current location acquired. opening Google Maps...');
+        navigateMapWorkspace(mapUrl);
+    } catch (errorValue) {
+        closeOpenedMapWindow();
+        print(getCurrentLocationErrorMessage(errorValue));
+    }
+};
+
 const isValidMapCloseMessage = (data) => {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
     const keys = Object.keys(data).sort();
@@ -49,10 +142,10 @@ window.addEventListener('message', (event) => {
 });
 
 const mapTool = {
-    helpText: "open an interactive map centered on a location (use: map/[location] or map/road/[location])",
+    helpText: "open an interactive map centered on a location (use: map/[location], map/location, or map/road/[location])",
     prompt: "map>",
     onEnter: async () => {
-        print("system: map mode activated. type a location name or map/[location] (or road/[location]). type exit to return to the main terminal or press CTRL + E.");
+        print("system: map mode activated. type a location name, map/location, map/[location], or road/[location]. type exit to return to the main terminal or press CTRL + E.");
     },
     handleInput: async (input) => {
         print(`map>${input}`);
@@ -80,6 +173,12 @@ const mapTool = {
 
         if (cleanInput === '') {
             print("error: please specify a valid location.");
+            return;
+        }
+
+        const normalizedInput = cleanInput.toLowerCase();
+        if (normalizedInput === 'map/location' || normalizedInput === 'location') {
+            await handleCurrentLocation();
             return;
         }
 
@@ -118,23 +217,12 @@ const mapTool = {
 
 
         try {
-            closeOpenedMapWindow();
-
             // Open the new tab immediately from the user command so browser popup blockers
             // are less likely to reject it while geocoding runs asynchronously.
-            const initialMapWindow = window.open('about:blank', '_blank');
-            if (initialMapWindow) {
-                rememberOpenedMapWindow(initialMapWindow);
-                try {
-                    openedWindow.opener = null;
-                } catch {
-                    try { openedWindow.close(); } catch { /* best-effort cleanup */ }
-                    openedWindow = null;
-                    openedWindowOrigin = null;
-                }
-            }
-            if (!openedWindow) {
-                print("error: the browser blocked the new tab. allow pop-ups for Studio and try again.");
+            try {
+                openMapWorkspaceWindow();
+            } catch (errorValue) {
+                print(`error: ${errorValue instanceof Error ? errorValue.message : 'could not open the map workspace.'}`);
                 return;
             }
 
@@ -169,20 +257,7 @@ const mapTool = {
             const mapQuery = encodeURIComponent(displayName);
             const mapUrl =
                 `https://www.google.com/maps/search/?api=1&query=${mapQuery}`;
-            const mapOrigin = new URL(mapUrl).origin;
-
-            if (openedWindow && !openedWindow.closed) {
-                openedWindowOrigin = mapOrigin;
-                openedWindow.location.replace(mapUrl);
-                try {
-                    openedWindow.focus();
-                } catch {
-                    // Focusing a cross-origin tab can be denied by the browser.
-                }
-            } else {
-                // The first tab may have been closed while geocoding was in progress.
-                rememberOpenedMapWindow(openExternalUrl(mapUrl), mapOrigin);
-            }
+            navigateMapWorkspace(mapUrl);
 
             if (!openedWindow) {
                 print("error: failed to open the map tab.");
